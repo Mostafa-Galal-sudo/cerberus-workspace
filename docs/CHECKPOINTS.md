@@ -27,10 +27,13 @@ Status: database and seed workflow implemented; administrative editing UI is inc
 
 ## WS-04 — Tasks and approval workflow
 
-Status: core vertical slice implemented.
+Status: core vertical slice and interactive Kanban implemented and verifiable.
 
 - Paginated task listing/search/filter, detail records, required checklists, dependency enforcement, versioned evidence submissions, independent administrative review, self-approval prevention, notifications, audit events, and progress events.
-- Kanban drag-and-drop, task definition editor, dependency editor/cycle-check API, checkpoint-level submission, and archival UI remain.
+- Interactive 4-column drag-and-drop Kanban board (`todo`, `in_progress`, `submitted`, `blocked`), optimistic cache updates, failure rollback, keyboard navigation, accessible move menus, and evidence-gated review submission modal.
+- Server-side RBAC hardening: supervisor read-only enforcement across status, checklist, and submission APIs.
+- Comprehensive unit test coverage for status transitions, RBAC, evidence validation, and rollback recovery.
+- Remaining: task definition editor, dependency editor/cycle-check API, checkpoint-level submission, and archival UI.
 
 ## WS-05 through WS-12
 
