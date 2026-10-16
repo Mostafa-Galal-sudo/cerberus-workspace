@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.initial-credentials.local.txt
+.env
+coverage/
+*.tsbuildinfo
+.DS_Store
+Thumbs.db

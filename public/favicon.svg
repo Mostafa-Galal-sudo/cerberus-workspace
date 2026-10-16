@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="CERBERUS Six-Headed Monochromatic Guardian">
+  <defs>
+    <linearGradient id="g-plate" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3a424e"/>
+      <stop offset="50%" stop-color="#1e232b"/>
+      <stop offset="100%" stop-color="#0e1014"/>
+    </linearGradient>
+    <linearGradient id="g-silver" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="50%" stop-color="#cbd5e1"/>
+      <stop offset="100%" stop-color="#94a3b8"/>
+    </linearGradient>
+    <radialGradient id="g-halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#cbd5e1" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#080a0d" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="g-shade" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#000" flood-opacity="0.9"/>
+    </filter>
+  </defs>
+
+  <!-- Deep Obsidian Forged Shield -->
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="#08090c" stroke="#252b36" stroke-width="1.5"/>
+  <rect x="4.5" y="4.5" width="55" height="55" rx="9.5" fill="none" stroke="#161a22" stroke-width="1"/>
+  <circle cx="32" cy="32" r="25" fill="url(#g-halo)"/>
+
+  <!-- Engraved Six-Headed Guardian Crest (Monochromatic Chiaroscuro) -->
+  <g filter="url(#g-shade)">
+    <!-- Rear Upper Left Head (Head 1) -->
+    <path d="M15 24 L10 13 L17 17 L21 11 L23 20 L18 25 Z" fill="url(#g-plate)" stroke="#94a3b8" stroke-width="1.1" stroke-linejoin="round"/>
+    <circle cx="15" cy="18" r="1.1" fill="#e2e8f0"/>
+    <path d="M12 21 L16 23" stroke="#64748b" stroke-width="1" stroke-linecap="round"/>
+
+    <!-- Rear Upper Right Head (Head 2) -->
+    <path d="M49 24 L54 13 L47 17 L43 11 L41 20 L46 25 Z" fill="url(#g-plate)" stroke="#94a3b8" stroke-width="1.1" stroke-linejoin="round"/>
+    <circle cx="49" cy="18" r="1.1" fill="#e2e8f0"/>
+    <path d="M52 21 L48 23" stroke="#64748b" stroke-width="1" stroke-linecap="round"/>
+
+    <!-- Rear Top Center Alpha Head (Head 3) -->
+    <path d="M32 6 L27 15 L30 17 L26 22 L32 24 L38 22 L34 17 L37 15 Z" fill="url(#g-plate)" stroke="#cbd5e1" stroke-width="1.3" stroke-linejoin="round"/>
+    <circle cx="30" cy="17" r="1.2" fill="#f8fafc"/>
+    <circle cx="34" cy="17" r="1.2" fill="#f8fafc"/>
+    <path d="M29 21 L32 23 L35 21" stroke="#cbd5e1" stroke-width="1" fill="none" stroke-linejoin="round"/>
+
+    <!-- Intaglio Neck Sinews & Iron Chains -->
+    <path d="M22 27 Q32 33 42 27 L40 39 L32 45 L24 39 Z" fill="#12161d" stroke="#2e3745" stroke-width="1"/>
+    <!-- Engraved chain links across chest -->
+    <path d="M19 32 Q24 36 32 37 Q40 36 45 32" fill="none" stroke="#64748b" stroke-width="1" stroke-dasharray="2,1.5"/>
+
+    <!-- Front Lower Left Striking Head (Head 4) -->
+    <path d="M10 37 L6 29 L14 31 L18 36 L15 44 L9 42 Z" fill="url(#g-plate)" stroke="#94a3b8" stroke-width="1.1" stroke-linejoin="round"/>
+    <circle cx="11.5" cy="33.5" r="1.1" fill="#e2e8f0"/>
+    <path d="M8 38 L13 39" stroke="#64748b" stroke-width="1" stroke-linecap="round"/>
+
+    <!-- Front Lower Right Striking Head (Head 5) -->
+    <path d="M54 37 L58 29 L50 31 L46 36 L49 44 L55 42 Z" fill="url(#g-plate)" stroke="#94a3b8" stroke-width="1.1" stroke-linejoin="round"/>
+    <circle cx="52.5" cy="33.5" r="1.1" fill="#e2e8f0"/>
+    <path d="M56 38 L51 39" stroke="#64748b" stroke-width="1" stroke-linecap="round"/>
+
+    <!-- Front Lower Center Sentinel Head (Head 6) -->
+    <path d="M32 26 L25 34 L28 44 L32 52 L36 44 L39 34 Z" fill="url(#g-plate)" stroke="#f1f5f9" stroke-width="1.4" stroke-linejoin="round"/>
+    <path d="M28 37 L32 41 L36 37" fill="#090b0e" stroke="#94a3b8" stroke-width="0.9"/>
+    <!-- Fierce eyes and bared fangs -->
+    <circle cx="28.5" cy="34" r="1.3" fill="#f8fafc"/>
+    <circle cx="35.5" cy="34" r="1.3" fill="#f8fafc"/>
+    <path d="M30 44 L32 48 L34 44" fill="none" stroke="#cbd5e1" stroke-width="1.2" stroke-linecap="round"/>
+    <path d="M29 41 L35 41" stroke="#e2e8f0" stroke-width="1" stroke-linecap="round"/>
+  </g>
+
+  <!-- Sentinel Focal Keystone -->
+  <polygon points="32,54 34,57 32,60 30,57" fill="#cbd5e1" stroke="#475569" stroke-width="0.5"/>
+</svg>

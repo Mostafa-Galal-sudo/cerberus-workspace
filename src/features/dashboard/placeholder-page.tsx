@@ -1,0 +1,2 @@
+import { Construction } from 'lucide-react';
+export function PlaceholderPage({ title }: { title: string }) { return <div className="page"><header className="page-header"><div><span className="breadcrumb">Workspace module</span><h1>{title}</h1><p>This interface is reserved for a later implementation checkpoint.</p></div></header><div className="module-notice"><Construction /><h2>Not implemented in this checkpoint</h2><p>The route is protected, but its workflow has not been marked complete.</p></div></div>; }
