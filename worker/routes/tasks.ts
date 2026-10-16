@@ -290,6 +290,9 @@ taskRoutes.patch('/:id/status', async (context) => {
   if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
 
   const user = context.get('user');
+  if (!user.permissions.includes('task.work') && !user.permissions.includes('task.manage')) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'You do not have permission to modify tasks' } }, 403);
+  }
   if (task.assignee_id !== user.id && !user.permissions.includes('task.manage')) {
     return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the assignee or an administrator can update this task' } }, 403);
   }
@@ -309,6 +312,9 @@ taskRoutes.patch('/:id/checklist/:itemId', async (context) => {
   const task = await context.env.DB.prepare(`SELECT assignee_id FROM tasks WHERE id=? AND archived_at IS NULL`).bind(context.req.param('id')).first<{ assignee_id: string | null }>();
   if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
   const user = context.get('user');
+  if (!user.permissions.includes('task.work') && !user.permissions.includes('task.manage')) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'You do not have permission to modify task checklists' } }, 403);
+  }
   if (task.assignee_id !== user.id && !user.permissions.includes('task.manage')) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Checklist is restricted to the assignee' } }, 403);
   const result = await context.env.DB.prepare(`UPDATE task_checklist_items SET completed_at=?, completed_by=?, updated_at=unixepoch() WHERE id=? AND task_id=?`)
     .bind(body.completed === true ? Math.floor(Date.now() / 1000) : null, body.completed === true ? user.id : null, context.req.param('itemId'), context.req.param('id')).run();
@@ -322,6 +328,9 @@ taskRoutes.post('/:id/submissions', async (context) => {
   const task = await context.env.DB.prepare(`SELECT id, project_id, assignee_id, status, evidence_requirements FROM tasks WHERE id=? AND archived_at IS NULL`).bind(context.req.param('id')).first<{ id: string; project_id: string; assignee_id: string | null; status: string; evidence_requirements: string }>();
   if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
   const user = context.get('user');
+  if (!user.permissions.includes('task.work') && !user.permissions.includes('task.manage')) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'You do not have permission to submit tasks' } }, 403);
+  }
   if (task.assignee_id !== user.id) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the assigned member can submit this task' } }, 403);
   const requiredIncomplete = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM task_checklist_items WHERE task_id=? AND required=1 AND completed_at IS NULL`).bind(task.id).first<{ count: number }>();
   if ((requiredIncomplete?.count ?? 0) > 0) return context.json({ ok: false, error: { code: 'CHECKLIST_INCOMPLETE', message: 'Complete all required checklist items before submitting' } }, 409);
