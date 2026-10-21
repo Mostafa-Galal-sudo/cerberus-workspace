@@ -82,7 +82,7 @@ Production is deployed at `https://cerberus-workspace.mosthistory139.workers.dev
 8. Optionally configure live integrations: `EMAIL_PROVIDER`, `EMAIL_API_KEY`, and `EMAIL_FROM` for Resend or the Cloudflare Email binding; `GITHUB_TOKEN` for PAT authentication; or `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_INSTALLATION_ID` for GitHub App authentication.
 9. Call `/api/v1/setup/initialize` once using the setup secret, save the one-time temporary credentials, then delete the setup secret.
 
-Current production state (2026-10-22): migrations `0001`–`0006` are applied and Worker version `0d155030-6148-4a8e-9b9a-c42aced8776f` is live. R2 is not yet enabled on the account, so that deployment was published without the `ATTACHMENTS` binding and attachment routes return `503 ATTACHMENTS_UNAVAILABLE`. After enabling R2 and creating `cerberus-attachments`, run `npm run deploy` to publish the binding.
+Current production state (2026-10-22): migrations `0001`–`0006` are applied and Worker version `c7445a96-2025-40cb-93ec-f4e799cde685` is live. R2 is not yet enabled on the account, so that deployment was published without the `ATTACHMENTS` binding and attachment routes return `503 ATTACHMENTS_UNAVAILABLE`. After enabling R2 and creating `cerberus-attachments`, run `npm run deploy` to publish the binding.
 
 `APP_ENV` is `production` and `APP_ORIGIN` must always match the exact deployed HTTPS origin, including when a custom domain is added. External integrations are disabled until their credentials are configured. Never commit `.dev.vars` or provider credentials; the build script rejects bundles that contain values from `.dev.vars`.
 
