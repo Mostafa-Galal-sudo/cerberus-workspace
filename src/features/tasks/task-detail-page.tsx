@@ -1,13 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   Archive,
   ArrowLeft,
   Check,
   Circle,
   Edit3,
   GitPullRequest,
+  Layers,
+  Link2,
   Plus,
   Send,
+  Shield,
   ShieldAlert,
   ShieldCheck,
   Trash2,
@@ -41,8 +45,15 @@ interface Detail {
   };
   checklist: Array<{ id: string; title: string; required: number; completed_at: number | null }>;
   dependencies: Array<{ id: string; title: string; status: string; priority: string }>;
+  dependents?: Array<{ id: string; title: string; status: string; priority: string }>;
   submissions: Array<{ id: string; status: string; version: number; summary: string; submitted_at: number }>;
   availableTasks?: Array<{ id: string; title: string }>;
+}
+
+interface MemberOption {
+  id: string;
+  name: string;
+  specialization: string;
 }
 
 export function TaskDetailPage() {
@@ -54,28 +65,48 @@ export function TaskDetailPage() {
   const [summary, setSummary] = useState('');
   const [evidence, setEvidence] = useState('');
   const [message, setMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
   const [selectedDepId, setSelectedDepId] = useState('');
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [activeEditTab, setActiveEditTab] = useState<'core' | 'execution' | 'criteria'>('core');
 
-  // Edit fields
+  // Comprehensive Edit fields
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
   const [editPriority, setEditPriority] = useState('medium');
+  const [editAssigneeId, setEditAssigneeId] = useState('');
+  const [editImplementationSteps, setEditImplementationSteps] = useState('');
+  const [editDeliverables, setEditDeliverables] = useState('');
+  const [editPrerequisites, setEditPrerequisites] = useState('');
+  const [editInputs, setEditInputs] = useState('');
+  const [editRequiredTools, setEditRequiredTools] = useState('');
+  const [editExpectedOutputs, setEditExpectedOutputs] = useState('');
   const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState('');
   const [editValidationProcedure, setEditValidationProcedure] = useState('');
   const [editEvidenceRequirements, setEditEvidenceRequirements] = useState('');
 
-  const isAdmin = user?.roles.includes('super_admin');
+  const isAdmin = Boolean(user?.roles.includes('super_admin') || user?.permissions.includes('task.manage'));
+  const isSupervisor = Boolean(user?.roles.includes('project_supervisor'));
 
   const query = useQuery({
     queryKey: ['task', taskId],
     queryFn: () => api<Detail>(`/tasks/${taskId}`),
   });
 
+  const membersQuery = useQuery({
+    queryKey: ['members-short'],
+    queryFn: () => api<MemberOption[]>('/users'),
+    enabled: isEditOpen,
+  });
+
   const checklist = useMutation({
     mutationFn: ({ id, completed }: { id: string; completed: boolean }) =>
       api(`/tasks/${taskId}/checklist/${id}`, { method: 'PATCH', body: JSON.stringify({ completed }) }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ['task', taskId] }),
+    onSuccess: () => {
+      setErrorMessage('');
+      client.invalidateQueries({ queryKey: ['task', taskId] });
+    },
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Checklist update failed'),
   });
 
   const submit = useMutation({
@@ -89,11 +120,13 @@ export function TaskDetailPage() {
       }),
     onSuccess: () => {
       setMessage('Submitted for independent administrative review.');
+      setErrorMessage('');
       setSummary('');
       setEvidence('');
       void client.invalidateQueries({ queryKey: ['task', taskId] });
+      void client.invalidateQueries({ queryKey: ['tasks'] });
     },
-    onError: (error) => setMessage(error instanceof ApiError ? error.message : 'Submission failed'),
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Submission failed'),
   });
 
   const addDependency = useMutation({
@@ -101,10 +134,11 @@ export function TaskDetailPage() {
       api(`/tasks/${taskId}/dependencies`, { method: 'POST', body: JSON.stringify({ dependsOnTaskId: targetId }) }),
     onSuccess: () => {
       setSelectedDepId('');
-      setMessage('Upstream dependency linked.');
+      setMessage('Upstream prerequisite linked.');
+      setErrorMessage('');
       void client.invalidateQueries({ queryKey: ['task', taskId] });
     },
-    onError: (error) => setMessage(error instanceof ApiError ? error.message : 'Failed to add dependency'),
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Failed to add dependency'),
   });
 
   const removeDependency = useMutation({
@@ -112,9 +146,10 @@ export function TaskDetailPage() {
       api(`/tasks/${taskId}/dependencies/${targetId}`, { method: 'DELETE' }),
     onSuccess: () => {
       setMessage('Dependency constraint removed.');
+      setErrorMessage('');
       void client.invalidateQueries({ queryKey: ['task', taskId] });
     },
-    onError: (error) => setMessage(error instanceof ApiError ? error.message : 'Failed to remove dependency'),
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Failed to remove dependency'),
   });
 
   const updateTask = useMutation({
@@ -125,6 +160,13 @@ export function TaskDetailPage() {
           title: editTitle,
           description: editDescription,
           priority: editPriority,
+          assigneeId: editAssigneeId || null,
+          implementationSteps: editImplementationSteps,
+          deliverables: editDeliverables,
+          prerequisites: editPrerequisites,
+          inputs: editInputs,
+          requiredTools: editRequiredTools,
+          expectedOutputs: editExpectedOutputs,
           acceptanceCriteria: editAcceptanceCriteria,
           validationProcedure: editValidationProcedure,
           evidenceRequirements: editEvidenceRequirements,
@@ -132,35 +174,66 @@ export function TaskDetailPage() {
       }),
     onSuccess: () => {
       setIsEditOpen(false);
-      setMessage('Task specification updated.');
+      setMessage('Task specification persisted.');
+      setErrorMessage('');
       void client.invalidateQueries({ queryKey: ['task', taskId] });
+      void client.invalidateQueries({ queryKey: ['tasks'] });
     },
-    onError: (error) => setMessage(error instanceof ApiError ? error.message : 'Update failed'),
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Update failed'),
   });
 
   const archiveTask = useMutation({
     mutationFn: () => api(`/tasks/${taskId}`, { method: 'DELETE' }),
     onSuccess: () => navigate('/tasks'),
-    onError: (error) => setMessage(error instanceof ApiError ? error.message : 'Archive failed'),
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Archive failed'),
   });
 
   if (query.isLoading) return <PageSkeleton />;
   if (!query.data) return <EmptyState title="Task not found" body="This task may have been archived or is unavailable." />;
 
   const { task } = query.data;
-  const canWork = task.assignee_id === user?.id;
+  const canWork = task.assignee_id === user?.id && !isSupervisor;
   const completedChecklistCount = query.data.checklist.filter((item) => item.completed_at).length;
   const totalChecklistCount = query.data.checklist.length;
   const checklistPercent = totalChecklistCount ? Math.round((completedChecklistCount / totalChecklistCount) * 100) : 0;
+
+  // Dependency analysis
+  const unapprovedDependencies = query.data.dependencies.filter((d) => d.status !== 'approved');
+  const isBlockedByDependencies = unapprovedDependencies.length > 0;
+  const dependentsList = query.data.dependents ?? [];
 
   const handleStartEdit = () => {
     setEditTitle(task.title);
     setEditDescription(task.description);
     setEditPriority(task.priority);
-    setEditAcceptanceCriteria(task.acceptance_criteria);
-    setEditValidationProcedure(task.validation_procedure);
-    setEditEvidenceRequirements(task.evidence_requirements);
+    setEditAssigneeId(task.assignee_id || '');
+    setEditImplementationSteps(task.implementation_steps || '');
+    setEditDeliverables(task.deliverables || '');
+    setEditPrerequisites(task.prerequisites || '');
+    setEditInputs(task.inputs || '');
+    setEditRequiredTools(task.required_tools || '');
+    setEditExpectedOutputs(task.expected_outputs || '');
+    setEditAcceptanceCriteria(task.acceptance_criteria || '');
+    setEditValidationProcedure(task.validation_procedure || '');
+    setEditEvidenceRequirements(task.evidence_requirements || '');
     setIsEditOpen(true);
+  };
+
+  const handleAddDependencySubmit = () => {
+    if (!selectedDepId) return;
+
+    if (selectedDepId === taskId) {
+      setErrorMessage('A task cannot depend on itself.');
+      return;
+    }
+
+    // Client-side cycle pre-check: verify if selectedDepId is already dependent on this task
+    if (dependentsList.some((d) => d.id === selectedDepId)) {
+      setErrorMessage(`Cycle detected: Target task already depends on "${task.title}". Adding this would create a circular loop.`);
+      return;
+    }
+
+    addDependency.mutate(selectedDepId);
   };
 
   return (
@@ -199,6 +272,13 @@ export function TaskDetailPage() {
         </div>
       )}
 
+      {errorMessage && (
+        <div style={{ padding: '10px 16px', background: 'var(--color-status-blocked-bg)', border: '1px solid var(--color-status-blocked-border)', borderRadius: '4px', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ color: 'var(--color-status-blocked)', fontSize: '0.85rem' }}>{errorMessage}</span>
+          <Button variant="ghost" size="sm" onClick={() => setErrorMessage('')}>Dismiss</Button>
+        </div>
+      )}
+
       <header className="task-detail-header">
         <div>
           <div className="task-meta" style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap' }}>
@@ -233,6 +313,10 @@ export function TaskDetailPage() {
             </div>
             <DetailBlock title="Implementation steps" value={task.implementation_steps} />
             <DetailBlock title="Deliverables" value={task.deliverables} />
+            <DetailBlock title="Prerequisites & environment" value={task.prerequisites} />
+            <DetailBlock title="Required inputs" value={task.inputs} />
+            <DetailBlock title="Required tools" value={task.required_tools} />
+            <DetailBlock title="Expected outputs" value={task.expected_outputs} />
             <DetailBlock title="Acceptance criteria" value={task.acceptance_criteria} />
             <DetailBlock title="Validation procedure" value={task.validation_procedure} />
             <DetailBlock title="Evidence requirements" value={task.evidence_requirements} />
@@ -277,9 +361,9 @@ export function TaskDetailPage() {
                 <p>{completedChecklistCount} of {totalChecklistCount} verified ({checklistPercent}%)</p>
               </div>
               {checklistPercent === 100 ? (
-                <ShieldCheck size={20} style={{ color: 'var(--color-matrix-emerald)' }} />
+                <ShieldCheck size={20} style={{ color: 'var(--color-status-verified)' }} />
               ) : (
-                <ShieldAlert size={20} style={{ color: 'var(--color-magma-amber)' }} />
+                <ShieldAlert size={20} style={{ color: 'var(--color-status-progress)' }} />
               )}
             </div>
 
@@ -309,7 +393,7 @@ export function TaskDetailPage() {
                     color: 'inherit',
                   }}
                 >
-                  {item.completed_at ? <Check size={16} style={{ color: 'var(--color-status-approved)' }} /> : <Circle size={16} />}
+                  {item.completed_at ? <Check size={16} style={{ color: 'var(--color-status-verified)' }} /> : <Circle size={16} />}
                   <span style={{ flex: 1, fontSize: '0.85rem' }}>
                     {item.title}
                     {item.required ? <small style={{ color: 'var(--color-cyan-sentinel)', marginLeft: '6px' }}>Required</small> : null}
@@ -319,88 +403,175 @@ export function TaskDetailPage() {
             </div>
           </Panel>
 
-          {/* Dependency Manager */}
+          {/* Visual Dependency Gates Manager */}
           <Panel>
             <div className="panel-heading">
               <div>
-                <h2>Dependency gates</h2>
-                <p>Upstream prerequisites required before submission.</p>
+                <h2>Dependency Gates (DAG)</h2>
+                <p>Upstream prerequisites required before review submission.</p>
               </div>
+              <Layers size={18} style={{ color: 'var(--color-silver-mid)' }} />
             </div>
 
-            {query.data.dependencies.length ? (
-              <div className="compact-list" style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '12px' }}>
-                {query.data.dependencies.map((item) => (
-                  <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', background: 'var(--color-surface-subtle)', borderRadius: '4px' }}>
-                    <Link to={`/tasks/${item.id}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none', color: 'inherit', flex: 1 }}>
-                      <StatusBadge status={item.status} />
-                      <strong style={{ fontSize: '0.85rem' }}>{item.title}</strong>
-                    </Link>
-                    {isAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => removeDependency.mutate(item.id)}
-                        disabled={removeDependency.isPending}
-                        title="Remove dependency"
-                        style={{ background: 'none', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', padding: '4px' }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
-                ))}
+            {/* Blocking status banner */}
+            {isBlockedByDependencies && (
+              <div style={{ margin: '12px 14px 0', padding: '8px 12px', background: 'var(--color-status-blocked-bg)', border: '1px solid var(--color-status-blocked-border)', borderRadius: '4px', fontSize: '0.78rem', color: 'var(--color-status-blocked)', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                <AlertTriangle size={14} />
+                <span>Gated: {unapprovedDependencies.length} upstream prerequisite(s) not yet approved.</span>
               </div>
-            ) : (
-              <p className="quiet-copy" style={{ padding: '12px', color: 'var(--color-muted)', fontSize: '0.8rem' }}>
-                No upstream prerequisites. This work may proceed independently.
-              </p>
             )}
 
-            {/* Admin Add Dependency Form */}
+            {/* Upstream Prerequisites List */}
+            <div style={{ padding: '12px' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-pewter)', marginBottom: '8px', textTransform: 'uppercase' }}>
+                Upstream Prerequisites ({query.data.dependencies.length})
+              </div>
+
+              {query.data.dependencies.length ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {query.data.dependencies.map((item) => {
+                    const isApproved = item.status === 'approved';
+                    return (
+                      <div
+                        key={item.id}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '10px',
+                          background: 'var(--color-surface-subtle)',
+                          border: isApproved ? '1px solid var(--color-border-subtle)' : '1px solid var(--color-status-blocked-border)',
+                          borderRadius: '4px',
+                          gap: '8px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                          {isApproved ? (
+                            <ShieldCheck size={16} style={{ color: 'var(--color-status-verified)', flexShrink: 0 }} />
+                          ) : (
+                            <ShieldAlert size={16} style={{ color: 'var(--color-status-blocked)', flexShrink: 0 }} />
+                          )}
+                          <Link to={`/tasks/${item.id}`} style={{ textDecoration: 'none', color: 'inherit', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <strong style={{ fontSize: '0.82rem', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.title}</strong>
+                            <small style={{ fontSize: '0.7rem', color: isApproved ? 'var(--color-status-verified)' : 'var(--color-pewter)' }}>
+                              {isApproved ? 'Verified & Approved' : `Status: ${item.status}`}
+                            </small>
+                          </Link>
+                        </div>
+
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => removeDependency.mutate(item.id)}
+                            disabled={removeDependency.isPending}
+                            title="Remove dependency"
+                            style={{ background: 'none', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', padding: '4px' }}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p style={{ margin: 0, color: 'var(--color-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>
+                  No upstream prerequisites. This work item can proceed independently.
+                </p>
+              )}
+            </div>
+
+            {/* Downstream Dependents List (Tasks waiting on this task) */}
+            {dependentsList.length > 0 && (
+              <div style={{ padding: '0 12px 12px', borderTop: '1px solid var(--color-border-subtle)', paddingTop: '10px' }}>
+                <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--color-pewter)', marginBottom: '8px', textTransform: 'uppercase' }}>
+                  Downstream Dependents ({dependentsList.length})
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {dependentsList.map((dep) => (
+                    <Link
+                      key={dep.id}
+                      to={`/tasks/${dep.id}`}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '6px 8px',
+                        background: 'var(--color-surface-subtle)',
+                        borderRadius: '4px',
+                        textDecoration: 'none',
+                        color: 'inherit',
+                        fontSize: '0.8rem',
+                      }}
+                    >
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        <Link2 size={12} style={{ display: 'inline', marginRight: '6px', color: 'var(--color-pewter)' }} />
+                        {dep.title}
+                      </span>
+                      <StatusBadge status={dep.status} />
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Admin Add Prerequisite Form with Cycle Prevention */}
             {isAdmin && query.data.availableTasks && (
-              <div style={{ padding: '12px', borderTop: '1px solid var(--color-border)', display: 'flex', gap: '8px' }}>
-                <select
-                  value={selectedDepId}
-                  onChange={(e) => setSelectedDepId(e.target.value)}
-                  style={{ flex: 1, padding: '6px', fontSize: '0.8rem', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                >
-                  <option value="">Select upstream task...</option>
-                  {query.data.availableTasks
-                    .filter((t) => !query.data?.dependencies.some((d) => d.id === t.id))
-                    .map((t) => (
-                      <option key={t.id} value={t.id}>{t.title}</option>
-                    ))}
-                </select>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={!selectedDepId || addDependency.isPending}
-                  onClick={() => addDependency.mutate(selectedDepId)}
-                >
-                  <Plus size={14} /> Add
-                </Button>
+              <div style={{ padding: '12px', borderTop: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <select
+                    value={selectedDepId}
+                    onChange={(e) => {
+                      setSelectedDepId(e.target.value);
+                      setErrorMessage('');
+                    }}
+                    style={{ flex: 1, padding: '7px', fontSize: '0.8rem', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit' }}
+                  >
+                    <option value="">Select upstream task...</option>
+                    {query.data.availableTasks
+                      .filter((t) => !query.data?.dependencies.some((d) => d.id === t.id))
+                      .map((t) => (
+                        <option key={t.id} value={t.id}>{t.title}</option>
+                      ))}
+                  </select>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!selectedDepId || addDependency.isPending}
+                    onClick={handleAddDependencySubmit}
+                  >
+                    <Plus size={14} /> Add
+                  </Button>
+                </div>
               </div>
             )}
           </Panel>
 
           {/* Member Submit for Review Panel */}
           {canWork && task.status !== 'approved' && (
-            <Panel className="submit-panel" style={{ border: '1px solid var(--color-cyan-sentinel)', padding: '16px' }}>
+            <Panel className="submit-panel" style={{ border: '1px solid var(--color-border-armor)', padding: '16px' }}>
               <div className="panel-heading" style={{ marginBottom: '12px' }}>
                 <div>
                   <h2 style={{ fontSize: '1.1rem' }}>Submit for review</h2>
                   <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)' }}>Dispatches an alert to administrators for independent audit.</p>
                 </div>
-                <GitPullRequest style={{ color: 'var(--color-cyan-sentinel)' }} />
+                <GitPullRequest style={{ color: 'var(--color-silver-light)' }} />
               </div>
+
+              {isBlockedByDependencies && (
+                <div style={{ padding: '8px', background: 'var(--color-status-blocked-bg)', border: '1px solid var(--color-status-blocked-border)', borderRadius: '4px', marginBottom: '12px', fontSize: '0.78rem', color: 'var(--color-status-blocked)' }}>
+                  All upstream prerequisites must be approved before submitting.
+                </div>
+              )}
+
               <label className="field" style={{ display: 'block', marginBottom: '10px' }}>
-                <span style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Summary of implementation & test results *</span>
+                <span style={{ fontSize: '0.8rem', display: 'block', marginBottom: '4px' }}>Summary of implementation & test results (min 20 chars) *</span>
                 <textarea
                   rows={4}
                   value={summary}
                   onChange={(event) => setSummary(event.target.value)}
                   placeholder="Detail changes made, commands executed, and verified test outputs…"
-                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
+                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit' }}
                 />
               </label>
               <label className="field" style={{ display: 'block', marginBottom: '12px' }}>
@@ -409,11 +580,11 @@ export function TaskDetailPage() {
                   value={evidence}
                   onChange={(event) => setEvidence(event.target.value)}
                   placeholder="https://github.com/… or commit/PR link"
-                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
+                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit' }}
                 />
               </label>
               <Button
-                disabled={summary.length < 20 || !evidence || submit.isPending}
+                disabled={summary.length < 20 || !evidence || isBlockedByDependencies || submit.isPending}
                 onClick={() => submit.mutate()}
                 size="lg"
                 style={{ width: '100%' }}
@@ -426,78 +597,216 @@ export function TaskDetailPage() {
         </aside>
       </div>
 
-      {/* Edit Task Specification Modal */}
+      {/* Comprehensive Task Definition Editor Modal */}
       {isEditOpen && (
-        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}>
-          <div className="modal-card" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', maxWidth: '640px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--color-border)', paddingBottom: '10px' }}>
-              <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Edit Task Specification</h2>
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(5, 6, 8, 0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}>
+          <div className="modal-card" style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-armor)', borderRadius: '8px', maxWidth: '780px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px', boxShadow: '0 12px 36px rgba(0,0,0,0.8)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '12px' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.25rem', color: 'var(--color-platinum-pure)' }}>Edit Task Specification</h2>
+                <small style={{ color: 'var(--color-pewter)' }}>Configure technical deliverables, execution bounds, and validation gates</small>
+              </div>
               <Button variant="ghost" size="sm" onClick={() => setIsEditOpen(false)}><X size={18} /></Button>
             </div>
 
-            <form onSubmit={(e) => { e.preventDefault(); updateTask.mutate(); }} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <label>
-                <small>Title</small>
-                <input
-                  type="text"
-                  required
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                />
-              </label>
-              <label>
-                <small>Priority</small>
-                <select
-                  value={editPriority}
-                  onChange={(e) => setEditPriority(e.target.value)}
-                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
-                  <option value="critical">Critical</option>
-                </select>
-              </label>
-              <label>
-                <small>Scope & Description</small>
-                <textarea
-                  rows={3}
-                  value={editDescription}
-                  onChange={(e) => setEditDescription(e.target.value)}
-                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                />
-              </label>
-              <label>
-                <small>Acceptance Criteria</small>
-                <textarea
-                  rows={2}
-                  value={editAcceptanceCriteria}
-                  onChange={(e) => setEditAcceptanceCriteria(e.target.value)}
-                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                />
-              </label>
-              <label>
-                <small>Validation Procedure</small>
-                <textarea
-                  rows={2}
-                  value={editValidationProcedure}
-                  onChange={(e) => setEditValidationProcedure(e.target.value)}
-                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                />
-              </label>
-              <label>
-                <small>Evidence Requirements</small>
-                <input
-                  type="text"
-                  value={editEvidenceRequirements}
-                  onChange={(e) => setEditEvidenceRequirements(e.target.value)}
-                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                />
-              </label>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                <Button type="button" variant="ghost" onClick={() => setIsEditOpen(false)}>Cancel</Button>
-                <Button type="submit" variant="primary" disabled={updateTask.isPending}>Save changes</Button>
+            {/* Section tabs */}
+            <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '8px' }}>
+              <Button
+                variant={activeEditTab === 'core' ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setActiveEditTab('core')}
+              >
+                1. Core & Assignment
+              </Button>
+              <Button
+                variant={activeEditTab === 'execution' ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setActiveEditTab('execution')}
+              >
+                2. Execution & Tools
+              </Button>
+              <Button
+                variant={activeEditTab === 'criteria' ? 'secondary' : 'ghost'}
+                size="sm"
+                onClick={() => setActiveEditTab('criteria')}
+              >
+                3. Deliverables & Validation
+              </Button>
+            </div>
+
+            <form onSubmit={(e) => { e.preventDefault(); updateTask.mutate(); }} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {activeEditTab === 'core' && (
+                <>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Task Title *</label>
+                    <input
+                      type="text"
+                      required
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Priority Level</label>
+                      <select
+                        value={editPriority}
+                        onChange={(e) => setEditPriority(e.target.value)}
+                        style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                      >
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="critical">Critical</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Assigned Engineer</label>
+                      <select
+                        value={editAssigneeId}
+                        onChange={(e) => setEditAssigneeId(e.target.value)}
+                        style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                      >
+                        <option value="">Unassigned</option>
+                        {membersQuery.data?.map((m) => (
+                          <option key={m.id} value={m.id}>{m.name} ({m.specialization || 'Engineer'})</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Scope & Description *</label>
+                    <textarea
+                      rows={4}
+                      required
+                      value={editDescription}
+                      onChange={(e) => setEditDescription(e.target.value)}
+                      style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                    />
+                  </div>
+                </>
+              )}
+
+              {activeEditTab === 'execution' && (
+                <>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Implementation Steps</label>
+                    <textarea
+                      rows={3}
+                      value={editImplementationSteps}
+                      onChange={(e) => setEditImplementationSteps(e.target.value)}
+                      placeholder="Step-by-step procedures for development..."
+                      style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Prerequisites & Environment</label>
+                      <textarea
+                        rows={2}
+                        value={editPrerequisites}
+                        onChange={(e) => setEditPrerequisites(e.target.value)}
+                        style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Required Inputs</label>
+                      <textarea
+                        rows={2}
+                        value={editInputs}
+                        onChange={(e) => setEditInputs(e.target.value)}
+                        style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Required Tools</label>
+                      <input
+                        type="text"
+                        value={editRequiredTools}
+                        onChange={(e) => setEditRequiredTools(e.target.value)}
+                        style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Expected Outputs</label>
+                      <input
+                        type="text"
+                        value={editExpectedOutputs}
+                        onChange={(e) => setEditExpectedOutputs(e.target.value)}
+                        style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {activeEditTab === 'criteria' && (
+                <>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Deliverables *</label>
+                    <textarea
+                      rows={2}
+                      value={editDeliverables}
+                      onChange={(e) => setEditDeliverables(e.target.value)}
+                      placeholder="Tangible code, circuits, or documented artifacts produced..."
+                      style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Acceptance Criteria *</label>
+                    <textarea
+                      rows={3}
+                      required
+                      value={editAcceptanceCriteria}
+                      onChange={(e) => setEditAcceptanceCriteria(e.target.value)}
+                      placeholder="Rigorous conditions that must be completely satisfied..."
+                      style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Validation Procedure *</label>
+                    <textarea
+                      rows={2}
+                      required
+                      value={editValidationProcedure}
+                      onChange={(e) => setEditValidationProcedure(e.target.value)}
+                      placeholder="Exact test commands or hardware bench testing procedures..."
+                      style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Evidence Requirements *</label>
+                    <input
+                      type="text"
+                      required
+                      value={editEvidenceRequirements}
+                      onChange={(e) => setEditEvidenceRequirements(e.target.value)}
+                      placeholder="e.g., Pull request URL, oscilloscope screen capture, or CI test run"
+                      style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                    />
+                  </div>
+                </>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', borderTop: '1px solid var(--color-border-subtle)', paddingTop: '12px' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--color-pewter)' }}>
+                  <Shield size={12} style={{ display: 'inline', marginRight: '4px' }} /> Changes logged to immutable audit ledger
+                </span>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <Button type="button" variant="ghost" onClick={() => setIsEditOpen(false)}>Cancel</Button>
+                  <Button type="submit" variant="primary" disabled={updateTask.isPending}>Save changes</Button>
+                </div>
               </div>
             </form>
           </div>

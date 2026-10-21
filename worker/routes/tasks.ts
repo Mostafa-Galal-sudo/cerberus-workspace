@@ -67,7 +67,12 @@ taskRoutes.post('/checkpoints/:id/submissions', async (context) => {
   if (!checkpoint) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Checkpoint not found' } }, 404);
 
   const user = context.get('user');
-  if (checkpoint.owner_id !== user.id) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the checkpoint owner can submit for checkpoint review' } }, 403);
+  if (!user.permissions.includes('task.work') && !user.permissions.includes('task.manage')) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'You do not have permission to submit checkpoints' } }, 403);
+  }
+  if (checkpoint.owner_id !== user.id && !user.permissions.includes('task.manage')) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the checkpoint owner or an administrator can submit for checkpoint review' } }, 403);
+  }
 
   const pendingTasks = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM checkpoint_tasks ct JOIN tasks t ON t.id=ct.task_id WHERE ct.checkpoint_id=? AND t.status <> 'approved' AND t.archived_at IS NULL`).bind(checkpointId).first<{ count: number }>();
   if ((pendingTasks?.count ?? 0) > 0) {
@@ -131,14 +136,25 @@ taskRoutes.get('/:id', async (context) => {
     WHERE t.id=? AND t.archived_at IS NULL`).bind(context.req.param('id')).first();
   if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
 
-  const [checklist, dependencies, submissions, availableTasks] = await Promise.all([
+  const [checklist, dependencies, dependents, submissions, availableTasks] = await Promise.all([
     context.env.DB.prepare(`SELECT * FROM task_checklist_items WHERE task_id=? ORDER BY sort_order`).bind(context.req.param('id')).all(),
     context.env.DB.prepare(`SELECT t.id, t.title, t.status, t.priority FROM task_dependencies td JOIN tasks t ON t.id=td.depends_on_task_id WHERE td.task_id=?`).bind(context.req.param('id')).all(),
+    context.env.DB.prepare(`SELECT t.id, t.title, t.status, t.priority FROM task_dependencies td JOIN tasks t ON t.id=td.task_id WHERE td.depends_on_task_id=? AND t.archived_at IS NULL`).bind(context.req.param('id')).all(),
     context.env.DB.prepare(`SELECT s.*, u.display_name AS submitted_by_name FROM submissions s JOIN users u ON u.id=s.submitted_by WHERE s.task_id=? ORDER BY s.version DESC`).bind(context.req.param('id')).all(),
     context.env.DB.prepare(`SELECT t.id, t.title FROM tasks t WHERE t.id <> ? AND t.archived_at IS NULL ORDER BY t.title LIMIT 100`).bind(context.req.param('id')).all(),
   ]);
 
-  return context.json({ ok: true, data: { task, checklist: checklist.results, dependencies: dependencies.results, submissions: submissions.results, availableTasks: availableTasks.results } });
+  return context.json({
+    ok: true,
+    data: {
+      task,
+      checklist: checklist.results,
+      dependencies: dependencies.results,
+      dependents: dependents.results,
+      submissions: submissions.results,
+      availableTasks: availableTasks.results,
+    },
+  });
 });
 
 taskRoutes.post('/', requirePermission('task.manage'), async (context) => {

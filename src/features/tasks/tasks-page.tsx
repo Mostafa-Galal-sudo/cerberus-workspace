@@ -4,6 +4,7 @@ import {
   Check,
   CheckCircle2,
   Clock,
+  FileText,
   GripVertical,
   Kanban as KanbanIcon,
   List,
@@ -49,6 +50,7 @@ interface Checkpoint {
   approvedAt?: number;
   milestoneTitle: string;
   domainName: string;
+  ownerId: string;
   ownerName: string;
   taskCount: number;
   approvedTaskCount: number;
@@ -102,13 +104,21 @@ export function TasksPage() {
   const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
   const [activeCardMenuId, setActiveCardMenuId] = useState<string | null>(null);
 
-  // Quick submission modal state
+  // Quick submission modal state (task-level)
   const [submittingTask, setSubmittingTask] = useState<Task | null>(null);
   const [submissionSummary, setSubmissionSummary] = useState('');
   const [submissionEvidence, setSubmissionEvidence] = useState('');
   const [submissionEvidenceLabel, setSubmissionEvidenceLabel] = useState('Verification evidence');
   const [submissionEvidenceKind, setSubmissionEvidenceKind] = useState<'url' | 'github' | 'note'>('url');
   const [submissionError, setSubmissionError] = useState<string | null>(null);
+
+  // Checkpoint submission modal state
+  const [submittingCheckpoint, setSubmittingCheckpoint] = useState<Checkpoint | null>(null);
+  const [checkpointSummary, setCheckpointSummary] = useState('');
+  const [checkpointEvidence, setCheckpointEvidence] = useState('');
+  const [checkpointEvidenceLabel, setCheckpointEvidenceLabel] = useState('Verification evidence');
+  const [checkpointEvidenceKind, setCheckpointEvidenceKind] = useState<'url' | 'github' | 'note'>('url');
+  const [checkpointError, setCheckpointError] = useState<string | null>(null);
 
   // Create Task Form State
   const [newTitle, setNewTitle] = useState('');
@@ -228,6 +238,52 @@ export function TasksPage() {
     onSettled: () => {
       setPendingTaskId(null);
       void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+
+  const submitCheckpoint = useMutation({
+    mutationFn: ({
+      checkpointId,
+      summary,
+      evidence,
+    }: {
+      checkpointId: string;
+      summary: string;
+      evidence: Array<{ kind: 'url' | 'github' | 'note'; label: string; value: string }>;
+    }) =>
+      api(`/tasks/checkpoints/${checkpointId}/submissions`, {
+        method: 'POST',
+        body: JSON.stringify({ summary, evidence }),
+      }),
+    onMutate: async ({ checkpointId }) => {
+      await queryClient.cancelQueries({ queryKey: ['checkpoints'] });
+      const previousCheckpoints = queryClient.getQueryData<Checkpoint[]>(['checkpoints']);
+      if (previousCheckpoints) {
+        queryClient.setQueryData<Checkpoint[]>(
+          ['checkpoints'],
+          previousCheckpoints.map((cp) =>
+            cp.id === checkpointId ? { ...cp, status: 'ready_for_review' } : cp
+          )
+        );
+      }
+      return { previousCheckpoints };
+    },
+    onSuccess: () => {
+      setSubmittingCheckpoint(null);
+      setCheckpointSummary('');
+      setCheckpointEvidence('');
+      setCheckpointError(null);
+      setActionError(null);
+      void queryClient.invalidateQueries({ queryKey: ['checkpoints'] });
+    },
+    onError: (err, _variables, context) => {
+      if (context?.previousCheckpoints) {
+        queryClient.setQueryData(['checkpoints'], context.previousCheckpoints);
+      }
+      setCheckpointError(err instanceof ApiError ? err.message : 'Checkpoint submission failed');
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['checkpoints'] });
     },
   });
 
@@ -928,34 +984,104 @@ export function TasksPage() {
           {checkpointsQuery.isLoading ? (
             <PageSkeleton />
           ) : checkpointsQuery.data?.length ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '16px' }}>
               {checkpointsQuery.data.map((cp) => {
+                const allTasksApproved = cp.taskCount > 0 && cp.approvedTaskCount === cp.taskCount;
+                const isAlreadySubmitted = cp.status === 'ready_for_review' || cp.status === 'approved';
+                const isCheckpointOwner = user?.id === cp.ownerId || isAdmin || hasTaskManage;
+                const canSubmitCheckpoint = isCheckpointOwner && !isSupervisor;
+                const progressPct = cp.taskCount > 0 ? Math.round((cp.approvedTaskCount / cp.taskCount) * 100) : 0;
+
                 return (
-                  <Panel key={cp.id} className="checkpoint-overview-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <Panel key={cp.id} className="checkpoint-overview-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {/* Card Header */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--color-cyan-sentinel)', fontWeight: 600 }}>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--color-cyan-sentinel)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
                           {cp.domainName}
                         </span>
-                        <h3 style={{ margin: '2px 0 0', fontSize: '1rem' }}>{cp.title}</h3>
+                        <h3 style={{ margin: '3px 0 0', fontSize: '0.98rem', lineHeight: 1.3 }}>{cp.title}</h3>
+                        <small style={{ color: 'var(--color-pewter)', fontSize: '0.72rem' }}>{cp.milestoneTitle}</small>
                       </div>
                       <StatusBadge status={cp.status} />
                     </div>
 
-                    <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-muted)' }}>{cp.description}</p>
+                    <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--color-pewter)', lineHeight: 1.5 }}>{cp.description}</p>
 
-                    <div style={{ background: 'var(--color-surface-subtle)', padding: '10px', borderRadius: '4px', fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <div><strong>Deliverable:</strong> {cp.requiredDeliverable}</div>
-                      <div><strong>Acceptance:</strong> {cp.acceptanceCriteria}</div>
+                    {/* Key Info */}
+                    <div style={{ background: 'var(--color-surface-subtle)', padding: '10px 12px', borderRadius: '4px', fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '5px', border: '1px solid var(--color-border-subtle)' }}>
+                      <div><strong style={{ color: 'var(--color-silver-mid)' }}>Deliverable:</strong> <span style={{ color: 'var(--color-pewter)' }}>{cp.requiredDeliverable}</span></div>
+                      <div><strong style={{ color: 'var(--color-silver-mid)' }}>Acceptance:</strong> <span style={{ color: 'var(--color-pewter)' }}>{cp.acceptanceCriteria}</span></div>
                     </div>
 
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto', paddingTop: '8px', borderTop: '1px solid var(--color-border)' }}>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
-                        Assigned: <strong>{cp.ownerName}</strong>
+                    {/* Task Progress Bar */}
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px', fontSize: '0.74rem' }}>
+                        <span style={{ color: 'var(--color-silver-mid)' }}>Task Completion</span>
+                        <span style={{ color: allTasksApproved ? 'var(--color-status-verified)' : 'var(--color-silver-mid)', fontWeight: 600 }}>
+                          {cp.approvedTaskCount}/{cp.taskCount} approved ({progressPct}%)
+                        </span>
+                      </div>
+                      <div style={{ height: '5px', background: 'var(--color-surface-subtle)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            height: '100%',
+                            width: `${progressPct}%`,
+                            background: allTasksApproved ? 'var(--color-status-verified)' : 'var(--color-cyan-sentinel)',
+                            borderRadius: '3px',
+                            transition: 'width 0.4s ease',
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Footer: Owner + Submit Action */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto', paddingTop: '10px', borderTop: '1px solid var(--color-border-subtle)' }}>
+                      <span style={{ fontSize: '0.74rem', color: 'var(--color-pewter)' }}>
+                        Owner: <strong style={{ color: 'var(--color-silver-light)' }}>{cp.ownerName}</strong>
                       </span>
-                      <span style={{ fontSize: '0.75rem' }}>
-                        Tasks: <strong>{cp.approvedTaskCount}/{cp.taskCount} approved</strong>
-                      </span>
+
+                      {canSubmitCheckpoint && !isAlreadySubmitted && (
+                        allTasksApproved ? (
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => {
+                              setSubmittingCheckpoint(cp);
+                              setCheckpointSummary('');
+                              setCheckpointEvidence('');
+                              setCheckpointEvidenceLabel('Verification evidence');
+                              setCheckpointEvidenceKind('url');
+                              setCheckpointError(null);
+                            }}
+                            title="All tasks approved — ready to submit checkpoint"
+                          >
+                            <Send size={13} /> Submit Checkpoint
+                          </Button>
+                        ) : (
+                          <span
+                            style={{
+                              fontSize: '0.7rem',
+                              color: 'var(--color-pewter)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontStyle: 'italic',
+                            }}
+                            title={`${cp.taskCount - cp.approvedTaskCount} task(s) still pending approval`}
+                          >
+                            <AlertTriangle size={12} style={{ color: 'var(--color-status-blocked)' }} />
+                            {cp.taskCount - cp.approvedTaskCount} task{cp.taskCount - cp.approvedTaskCount !== 1 ? 's' : ''} pending
+                          </span>
+                        )
+                      )}
+
+                      {isAlreadySubmitted && (
+                        <span style={{ fontSize: '0.72rem', color: 'var(--color-status-verified)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <CheckCircle2 size={13} />
+                          {cp.status === 'approved' ? 'Approved' : 'In review'}
+                        </span>
+                      )}
                     </div>
                   </Panel>
                 );
@@ -964,6 +1090,155 @@ export function TasksPage() {
           ) : (
             <EmptyState title="No checkpoints loaded" body="Checkpoints will appear once roadmaps are initialized." />
           )}
+        </div>
+      )}
+
+      {/* Checkpoint Submission Modal */}
+      {submittingCheckpoint && (
+        <div
+          className="modal-backdrop"
+          style={{ position: 'fixed', inset: 0, background: 'rgba(5, 6, 8, 0.9)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}
+          role="dialog"
+          aria-labelledby="cp-submission-modal-title"
+          aria-modal="true"
+          onClick={(e) => { if (e.target === e.currentTarget) setSubmittingCheckpoint(null); }}
+        >
+          <div
+            className="modal-card"
+            style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-chiseled)', borderRadius: '8px', maxWidth: '560px', width: '100%', padding: '24px', boxShadow: '0 16px 48px rgba(0,0,0,0.85)', maxHeight: '90vh', overflowY: 'auto' }}
+          >
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--color-border-armor)', paddingBottom: '14px' }}>
+              <div>
+                <h3 id="cp-submission-modal-title" style={{ margin: 0, fontSize: '1.1rem', color: 'var(--color-platinum-pure)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <FileText size={18} style={{ color: 'var(--color-cyan-sentinel)' }} />
+                  Submit Checkpoint for Review
+                </h3>
+                <small style={{ color: 'var(--color-pewter)', display: 'block', marginTop: '3px' }}>
+                  Provide a technical summary and verification evidence for <strong style={{ color: 'var(--color-silver-mid)' }}>{submittingCheckpoint.title}</strong>
+                </small>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setSubmittingCheckpoint(null)} aria-label="Close modal">
+                <X size={16} />
+              </Button>
+            </div>
+
+            {/* Checkpoint info context */}
+            <div style={{ background: 'var(--color-surface-subtle)', padding: '10px 14px', borderRadius: '4px', marginBottom: '16px', border: '1px solid var(--color-border-subtle)', fontSize: '0.78rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                <span style={{ color: 'var(--color-pewter)' }}>Domain: <strong style={{ color: 'var(--color-silver-light)' }}>{submittingCheckpoint.domainName}</strong></span>
+                <span style={{ color: 'var(--color-status-verified)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <CheckCircle2 size={12} /> {submittingCheckpoint.approvedTaskCount}/{submittingCheckpoint.taskCount} tasks approved
+                </span>
+              </div>
+              <div style={{ color: 'var(--color-pewter)' }}>Required deliverable: <span style={{ color: 'var(--color-silver-mid)' }}>{submittingCheckpoint.requiredDeliverable}</span></div>
+            </div>
+
+            {checkpointError && (
+              <div style={{ padding: '8px 12px', background: 'var(--color-status-blocked-bg)', border: '1px solid var(--color-status-blocked-border)', borderRadius: '4px', marginBottom: '14px', color: 'var(--color-status-blocked)', fontSize: '0.8rem' }}>
+                {checkpointError}
+              </div>
+            )}
+
+            <form
+              id="cp-submission-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (checkpointSummary.trim().length < 20) {
+                  setCheckpointError('Summary must be at least 20 characters long.');
+                  return;
+                }
+                if (!checkpointEvidence.trim()) {
+                  setCheckpointError('At least one piece of verification evidence is required.');
+                  return;
+                }
+                submitCheckpoint.mutate({
+                  checkpointId: submittingCheckpoint.id,
+                  summary: checkpointSummary.trim(),
+                  evidence: [{
+                    kind: checkpointEvidenceKind,
+                    label: checkpointEvidenceLabel.trim() || 'Checkpoint evidence',
+                    value: checkpointEvidence.trim(),
+                  }],
+                });
+              }}
+              style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}
+            >
+              {/* Summary */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '5px', color: 'var(--color-silver-mid)', fontWeight: 600 }}>
+                  Technical Summary <span style={{ color: 'var(--color-status-blocked)' }}>*</span>
+                  <span style={{ fontWeight: 400, color: 'var(--color-pewter)', marginLeft: '6px' }}>(min 20 characters)</span>
+                </label>
+                <textarea
+                  id="cp-summary"
+                  value={checkpointSummary}
+                  onChange={(e) => setCheckpointSummary(e.target.value)}
+                  placeholder="Summarise what was completed across all checkpoint tasks, architectural decisions made, and validation procedures executed..."
+                  rows={4}
+                  required
+                  style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.84rem', resize: 'vertical' }}
+                />
+                <small style={{ color: checkpointSummary.trim().length >= 20 ? 'var(--color-status-verified)' : 'var(--color-pewter)', fontSize: '0.72rem' }}>
+                  {checkpointSummary.trim().length} / 20 minimum characters
+                </small>
+              </div>
+
+              {/* Evidence */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '5px', color: 'var(--color-silver-mid)', fontWeight: 600 }}>
+                  Verification Evidence <span style={{ color: 'var(--color-status-blocked)' }}>*</span>
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '8px', marginBottom: '8px' }}>
+                  <select
+                    id="cp-evidence-kind"
+                    value={checkpointEvidenceKind}
+                    onChange={(e) => setCheckpointEvidenceKind(e.target.value as 'url' | 'github' | 'note')}
+                    style={{ padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.82rem' }}
+                  >
+                    <option value="url">Web URL</option>
+                    <option value="github">GitHub PR/Commit</option>
+                    <option value="note">Test Run Note</option>
+                  </select>
+                  <input
+                    id="cp-evidence-label"
+                    value={checkpointEvidenceLabel}
+                    onChange={(e) => setCheckpointEvidenceLabel(e.target.value)}
+                    placeholder="Label (e.g. CI Test Run, PR #42)"
+                    style={{ padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.82rem' }}
+                  />
+                </div>
+                <input
+                  id="cp-evidence-value"
+                  value={checkpointEvidence}
+                  onChange={(e) => setCheckpointEvidence(e.target.value)}
+                  placeholder="Evidence URL, commit SHA, or verification record..."
+                  required
+                  style={{ width: '100%', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.82rem' }}
+                />
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '6px', paddingTop: '12px', borderTop: '1px solid var(--color-border-subtle)' }}>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  onClick={() => setSubmittingCheckpoint(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  type="submit"
+                  disabled={submitCheckpoint.isPending || checkpointSummary.trim().length < 20 || !checkpointEvidence.trim()}
+                >
+                  {submitCheckpoint.isPending
+                    ? <><Loader2 size={14} className="animate-spin" /> Submitting…</>
+                    : <><Send size={14} /> Confirm Checkpoint Submission</>}
+                </Button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
