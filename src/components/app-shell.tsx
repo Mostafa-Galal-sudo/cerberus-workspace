@@ -26,6 +26,7 @@ import {
 import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/auth-context';
+import { useRealtimeEvents } from '../lib/use-realtime-events';
 import { Button } from './ui';
 import { CerberusLogo, CerberusSentinelStatus } from './cerberus-logo';
 
@@ -36,6 +37,7 @@ export function AppShell() {
   const [mode, setMode] = useState<'member' | 'admin' | 'supervisor'>(() =>
     user?.roles.includes('super_admin') ? 'admin' : user?.roles.includes('project_supervisor') ? 'supervisor' : 'member'
   );
+  useRealtimeEvents(Boolean(user));
 
   if (!user) return null;
 

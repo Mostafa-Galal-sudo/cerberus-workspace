@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cerberus-workspace-e2e",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "cerberus-workspace-e2e",
+    "database_id": "00000000-0000-0000-0000-000000000001",
+    "migrations_dir": "db/migrations"
+  }],
+  "r2_buckets": [{
+    "binding": "ATTACHMENTS",
+    "bucket_name": "cerberus-attachments-e2e"
+  }],
+  "vars": {
+    "APP_ENV": "test",
+    "APP_ORIGIN": "http://127.0.0.1:4173",
+    "SETUP_TOKEN": "e2e-setup-token"
+  },
+  "observability": { "enabled": false }
+}

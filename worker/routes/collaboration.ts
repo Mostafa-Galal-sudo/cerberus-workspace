@@ -1,11 +1,61 @@
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { announcementSchema, messageSchema } from '../../shared/schemas/workspace';
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
+import { listWorkspaceEvents, workspaceEventStatements } from '../services/events';
 import type { Env, Variables } from '../types';
 
 export const collaborationRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 collaborationRoutes.use('*', requireAuth, requirePasswordChanged);
+
+collaborationRoutes.get('/events/poll', async (context) => {
+  const after = Number(context.req.query('after') ?? 0);
+  const events = await listWorkspaceEvents(context.env, context.get('user').id, Number.isFinite(after) ? after : 0);
+  return context.json({ ok: true, data: events });
+});
+
+collaborationRoutes.get('/events', async (context) => {
+  const userId = context.get('user').id;
+  const requested = Number(context.req.header('Last-Event-ID') ?? context.req.query('after') ?? 0);
+  let cursor = Number.isFinite(requested) && requested > 0 ? requested : 0;
+
+  if (cursor === 0) {
+    const latest = await context.env.DB.prepare(`SELECT COALESCE(MAX(seq), 0) AS seq FROM workspace_events WHERE user_id=?`)
+      .bind(userId).first<{ seq: number }>();
+    cursor = latest?.seq ?? 0;
+  }
+
+  return streamSSE(context, async (stream) => {
+    await stream.writeSSE({ event: 'ready', data: JSON.stringify({ cursor }), retry: 3000 });
+    const deadline = Date.now() + 25_000;
+
+    while (!stream.aborted && Date.now() < deadline) {
+      const events = await listWorkspaceEvents(context.env, userId, cursor);
+      for (const event of events) {
+        cursor = event.seq;
+        await stream.writeSSE({
+          id: String(event.seq),
+          event: 'workspace',
+          data: JSON.stringify({
+            seq: event.seq,
+            type: event.eventType,
+            createdAt: event.createdAt,
+            ...event.payload,
+          }),
+        });
+      }
+      await stream.sleep(2000);
+    }
+
+    if (!stream.aborted) {
+      await stream.writeSSE({ event: 'reconnect', data: JSON.stringify({ cursor }) });
+    }
+  }, async (error, stream) => {
+    console.error(JSON.stringify({ level: 'error', path: '/collaboration/events', message: error.message }));
+    await stream.close();
+  });
+});
 
 collaborationRoutes.get('/channels', async (context) => {
   const rows = await context.env.DB.prepare(`SELECT c.id, c.name, c.type,
@@ -56,25 +106,55 @@ collaborationRoutes.post('/channels/:id/messages', async (context) => {
     if (!parent) return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Reply target is not in this channel' } }, 422);
   }
   const id = crypto.randomUUID();
-  await context.env.DB.prepare(`INSERT INTO messages (id,channel_id,author_id,parent_id,body) VALUES (?,?,?,?,?)`)
-    .bind(id, channelId, context.get('user').id, parsed.data.parentId ?? null, parsed.data.body).run();
+  const memberRows = await context.env.DB.prepare(`SELECT user_id FROM channel_members WHERE channel_id=?`).bind(channelId).all<{ user_id: string }>();
+  await context.env.DB.batch([
+    context.env.DB.prepare(`INSERT INTO messages (id,channel_id,author_id,parent_id,body) VALUES (?,?,?,?,?)`)
+      .bind(id, channelId, context.get('user').id, parsed.data.parentId ?? null, parsed.data.body),
+    ...workspaceEventStatements(context.env, {
+      type: 'message.created',
+      userIds: memberRows.results.map((row) => row.user_id),
+      payload: { channelId, messageId: id },
+    }),
+  ]);
   return context.json({ ok: true, data: { id } }, 201);
 });
 
 collaborationRoutes.patch('/messages/:id', async (context) => {
   const parsed = messageSchema.pick({ body: true }).safeParse(await context.req.json().catch(() => null));
   if (!parsed.success) return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Message cannot be empty' } }, 422);
-  const result = await context.env.DB.prepare(`UPDATE messages SET body=?,updated_at=unixepoch() WHERE id=? AND author_id=? AND deleted_at IS NULL`)
-    .bind(parsed.data.body, context.req.param('id'), context.get('user').id).run();
-  if (!result.meta.changes) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the author can edit this message' } }, 403);
+  const message = await context.env.DB.prepare(`SELECT id, channel_id FROM messages WHERE id=? AND author_id=? AND deleted_at IS NULL`)
+    .bind(context.req.param('id'), context.get('user').id).first<{ id: string; channel_id: string }>();
+  if (!message) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the author can edit this message' } }, 403);
+
+  const memberRows = await context.env.DB.prepare(`SELECT user_id FROM channel_members WHERE channel_id=?`).bind(message.channel_id).all<{ user_id: string }>();
+  await context.env.DB.batch([
+    context.env.DB.prepare(`UPDATE messages SET body=?,updated_at=unixepoch() WHERE id=?`).bind(parsed.data.body, message.id),
+    ...workspaceEventStatements(context.env, {
+      type: 'message.updated',
+      userIds: memberRows.results.map((row) => row.user_id),
+      payload: { channelId: message.channel_id, messageId: message.id },
+    }),
+  ]);
   return context.json({ ok: true, data: null });
 });
 
 collaborationRoutes.delete('/messages/:id', async (context) => {
   const user = context.get('user');
-  const result = await context.env.DB.prepare(`UPDATE messages SET deleted_at=unixepoch(),body='[deleted]' WHERE id=? AND (author_id=? OR ?=1)`)
-    .bind(context.req.param('id'), user.id, user.roles.includes('super_admin') ? 1 : 0).run();
-  if (!result.meta.changes) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Message deletion denied' } }, 403);
+  const message = await context.env.DB.prepare(`SELECT id, channel_id, author_id FROM messages WHERE id=? AND deleted_at IS NULL`)
+    .bind(context.req.param('id')).first<{ id: string; channel_id: string; author_id: string }>();
+  if (!message || (message.author_id !== user.id && !user.roles.includes('super_admin'))) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Message deletion denied' } }, 403);
+  }
+
+  const memberRows = await context.env.DB.prepare(`SELECT user_id FROM channel_members WHERE channel_id=?`).bind(message.channel_id).all<{ user_id: string }>();
+  await context.env.DB.batch([
+    context.env.DB.prepare(`UPDATE messages SET deleted_at=unixepoch(),body='[deleted]' WHERE id=?`).bind(message.id),
+    ...workspaceEventStatements(context.env, {
+      type: 'message.deleted',
+      userIds: memberRows.results.map((row) => row.user_id),
+      payload: { channelId: message.channel_id, messageId: message.id },
+    }),
+  ]);
   return context.json({ ok: true, data: null });
 });
 
@@ -100,9 +180,25 @@ collaborationRoutes.post('/announcements', requirePermission('workspace.admin'),
   const parsed = announcementSchema.safeParse(await context.req.json().catch(() => null));
   if (!parsed.success) return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Announcement details are invalid', fields: parsed.error.flatten().fieldErrors } }, 422);
   const id = crypto.randomUUID();
+  const publishedAt = parsed.data.published ? Math.floor(Date.now()/1000) : null;
+  const roleFilter = parsed.data.audience === 'members' ? 'role_member'
+    : parsed.data.audience === 'supervisors' ? 'role_supervisor'
+      : parsed.data.audience === 'admins' ? 'role_admin' : null;
+  const recipients = parsed.data.published
+    ? await context.env.DB.prepare(`SELECT DISTINCT u.id FROM users u
+        ${roleFilter ? 'JOIN user_roles ur ON ur.user_id=u.id AND ur.role_id=?' : ''}
+        WHERE u.status='active' AND u.archived_at IS NULL`)
+        .bind(...(roleFilter ? [roleFilter] : [])).all<{ id: string }>()
+    : { results: [] as Array<{ id: string }> };
+
   await context.env.DB.batch([
     context.env.DB.prepare(`INSERT INTO announcements (id,author_id,title,body,audience,published_at,expires_at) VALUES (?,?,?,?,?,?,?)`)
-      .bind(id, context.get('user').id, parsed.data.title, parsed.data.body, parsed.data.audience, parsed.data.published ? Math.floor(Date.now()/1000) : null, parsed.data.expiresAt ?? null),
+      .bind(id, context.get('user').id, parsed.data.title, parsed.data.body, parsed.data.audience, publishedAt, parsed.data.expiresAt ?? null),
+    ...workspaceEventStatements(context.env, {
+      type: 'announcement.published',
+      userIds: recipients.results.map((row) => row.id),
+      payload: { announcementId: id, title: parsed.data.title },
+    }),
     audit(context.env, context.get('user').id, 'announcement.created', 'announcement', id),
   ]);
   return context.json({ ok: true, data: { id } }, 201);

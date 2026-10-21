@@ -15,6 +15,10 @@
     "database_id": "6aac7050-c5a2-49c8-90f2-840920ea58bf",
     "migrations_dir": "db/migrations"
   }],
+  "r2_buckets": [{
+    "binding": "ATTACHMENTS",
+    "bucket_name": "cerberus-attachments"
+  }],
   "vars": {
     "APP_ENV": "production",
     "APP_ORIGIN": "https://cerberus-workspace.mosthistory139.workers.dev"

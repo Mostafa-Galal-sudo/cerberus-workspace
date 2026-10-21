@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  ArrowRightLeft,
   Copy,
   Edit3,
   ExternalLink,
@@ -79,6 +80,10 @@ export function MembersPage() {
   const [copied, setCopied] = useState(false);
   const [feedbackBody, setFeedbackBody] = useState('');
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [isReassignOpen, setIsReassignOpen] = useState(false);
+  const [reassignTargetId, setReassignTargetId] = useState('');
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+  const [selectedCheckpointIds, setSelectedCheckpointIds] = useState<string[]>([]);
 
   const isAdmin = user?.roles.includes('super_admin') && mode === 'admin';
   const isSupervisor = user?.roles.includes('project_supervisor') || mode === 'supervisor';
@@ -124,11 +129,11 @@ export function MembersPage() {
   });
 
   const issuePasswordReset = useMutation({
-    mutationFn: (id: string) => api<{ resetUrl: string; expiresAt: number }>(`/users/${id}/reset-password`, { method: 'POST' }),
+    mutationFn: (id: string) => api<{ resetUrl: string; expiresAt: number; delivery: 'email' | 'manual' }>(`/users/${id}/reset-password`, { method: 'POST' }),
     onSuccess: (res) => {
       setResetUrl(`${window.location.origin}${res.resetUrl}`);
       setReissuedUrl(null);
-      setActionMessage('One-time password reset link generated.');
+      setActionMessage(res.delivery === 'email' ? 'One-time reset link generated and emailed to the member.' : 'One-time password reset link generated. Email delivery is not configured, so share it privately.');
     },
     onError: (err) => setActionMessage(err instanceof ApiError ? err.message : 'Password reset link generation failed'),
   });
@@ -161,6 +166,31 @@ export function MembersPage() {
     onError: (err) => setActionMessage(err instanceof ApiError ? err.message : 'Role update failed'),
   });
 
+  const reassignWork = useMutation({
+    mutationFn: () =>
+      api<{ reassignedTasks: number; reassignedCheckpoints: number; total: number; targetName: string }>(
+        `/users/${selectedMember?.id}/reassign-work`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            targetUserId: reassignTargetId,
+            taskIds: selectedTaskIds,
+            checkpointIds: selectedCheckpointIds,
+          }),
+        },
+      ),
+    onSuccess: (result) => {
+      setIsReassignOpen(false);
+      setSelectedTaskIds([]);
+      setSelectedCheckpointIds([]);
+      setActionMessage(`Transferred ${result.reassignedTasks} task(s) and ${result.reassignedCheckpoints} checkpoint(s) to ${result.targetName}.`);
+      void queryClient.invalidateQueries({ queryKey: ['members'] });
+      void queryClient.invalidateQueries({ queryKey: ['roadmap', selectedMember?.id] });
+      void queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+    onError: (err) => setActionMessage(err instanceof ApiError ? err.message : 'Work reassignment failed'),
+  });
+
   const submitFeedback = useMutation({
     mutationFn: () =>
       api(`/workspace/supervisor/feedback/${selectedMember?.id}`, {
@@ -191,6 +221,9 @@ export function MembersPage() {
     setActionMessage(null);
     setEditingProfile(false);
     setEditingRoles(false);
+    setIsReassignOpen(false);
+    setSelectedTaskIds([]);
+    setSelectedCheckpointIds([]);
   };
 
   const handleStartEdit = () => {
@@ -209,6 +242,24 @@ export function MembersPage() {
 
   const toggleRole = (role: string) => {
     setSelectedRoles((current) => current.includes(role) ? current.filter((value) => value !== role) : [...current, role]);
+  };
+
+  const canReceiveWork = (member: Member) => member.roles.split(',').some((role) => ['team_member', 'technical_lead', 'super_admin'].includes(role.trim()));
+
+  const openReassign = () => {
+    const fallbackTarget = membersQuery.data?.find((member) => member.id !== selectedMember?.id && member.status === 'active' && canReceiveWork(member));
+    setReassignTargetId(fallbackTarget?.id ?? '');
+    setSelectedTaskIds([]);
+    setSelectedCheckpointIds([]);
+    setIsReassignOpen(true);
+  };
+
+  const toggleTaskSelection = (taskId: string) => {
+    setSelectedTaskIds((current) => current.includes(taskId) ? current.filter((value) => value !== taskId) : [...current, taskId]);
+  };
+
+  const toggleCheckpointSelection = (checkpointId: string) => {
+    setSelectedCheckpointIds((current) => current.includes(checkpointId) ? current.filter((value) => value !== checkpointId) : [...current, checkpointId]);
   };
 
   const copyInvite = () => {
@@ -347,6 +398,12 @@ export function MembersPage() {
                 {isAdmin && !editingRoles && (
                   <Button variant="secondary" size="sm" onClick={handleStartRoleEdit}>
                     <ShieldCheck size={14} /> Roles
+                  </Button>
+                )}
+
+                {isAdmin && (
+                  <Button variant="secondary" size="sm" onClick={openReassign}>
+                    <ArrowRightLeft size={14} /> Reassign work
                   </Button>
                 )}
 
@@ -718,6 +775,113 @@ export function MembersPage() {
           </Panel>
         ) : null}
       </div>
+
+      {isReassignOpen && selectedMember && (
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}>
+          <div className="modal-card" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', maxWidth: '720px', width: '100%', maxHeight: '86vh', overflowY: 'auto', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid var(--color-border)', paddingBottom: '10px' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Reassign work</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-muted)' }}>
+                  Transfer tasks and checkpoint ownership from {selectedMember.name}. The target member is notified and the transfer is audited.
+                </p>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setIsReassignOpen(false)}>Close</Button>
+            </div>
+
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                reassignWork.mutate();
+              }}
+              style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}
+            >
+              <label>
+                <small>Target member *</small>
+                <select
+                  value={reassignTargetId}
+                  onChange={(event) => setReassignTargetId(event.target.value)}
+                  required
+                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit' }}
+                >
+                  <option value="">Choose an active member…</option>
+                  {(membersQuery.data ?? [])
+                    .filter((member) => member.id !== selectedMember.id && member.status === 'active' && canReceiveWork(member))
+                    .map((member) => (
+                      <option key={member.id} value={member.id}>{member.name} — {member.specialization || 'Member'}</option>
+                    ))}
+                </select>
+              </label>
+
+              {roadmapQuery.isLoading ? (
+                <PageSkeleton />
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '12px' }}>
+                  <div style={{ background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <strong style={{ fontSize: '0.85rem' }}>Tasks ({selectedTaskIds.length}/{roadmapQuery.data?.tasks.length ?? 0})</strong>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTaskIds(selectedTaskIds.length === (roadmapQuery.data?.tasks.length ?? 0) ? [] : (roadmapQuery.data?.tasks.map((task) => task.id) ?? []))}
+                        style={{ background: 'none', border: 'none', color: 'var(--color-cyan-sentinel)', cursor: 'pointer', fontSize: '0.75rem' }}
+                      >
+                        {selectedTaskIds.length === (roadmapQuery.data?.tasks.length ?? 0) ? 'Clear' : 'Select all'}
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '240px', overflowY: 'auto' }}>
+                      {roadmapQuery.data?.tasks.length ? roadmapQuery.data.tasks.map((task) => (
+                        <label key={task.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '6px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '4px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={selectedTaskIds.includes(task.id)} onChange={() => toggleTaskSelection(task.id)} style={{ marginTop: '2px' }} />
+                          <span>
+                            <strong style={{ display: 'block', fontSize: '0.8rem' }}>{task.title}</strong>
+                            <small style={{ color: 'var(--color-muted)', fontSize: '0.7rem' }}>{task.status.replaceAll('_', ' ')}</small>
+                          </span>
+                        </label>
+                      )) : <small style={{ color: 'var(--color-muted)' }}>No tasks owned by this member.</small>}
+                    </div>
+                  </div>
+
+                  <div style={{ background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', padding: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <strong style={{ fontSize: '0.85rem' }}>Checkpoints ({selectedCheckpointIds.length}/{roadmapQuery.data?.checkpoints.length ?? 0})</strong>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCheckpointIds(selectedCheckpointIds.length === (roadmapQuery.data?.checkpoints.length ?? 0) ? [] : (roadmapQuery.data?.checkpoints.map((checkpoint) => checkpoint.id) ?? []))}
+                        style={{ background: 'none', border: 'none', color: 'var(--color-cyan-sentinel)', cursor: 'pointer', fontSize: '0.75rem' }}
+                      >
+                        {selectedCheckpointIds.length === (roadmapQuery.data?.checkpoints.length ?? 0) ? 'Clear' : 'Select all'}
+                      </button>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '240px', overflowY: 'auto' }}>
+                      {roadmapQuery.data?.checkpoints.length ? roadmapQuery.data.checkpoints.map((checkpoint) => (
+                        <label key={checkpoint.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', padding: '6px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '4px', cursor: 'pointer' }}>
+                          <input type="checkbox" checked={selectedCheckpointIds.includes(checkpoint.id)} onChange={() => toggleCheckpointSelection(checkpoint.id)} style={{ marginTop: '2px' }} />
+                          <span>
+                            <strong style={{ display: 'block', fontSize: '0.8rem' }}>{checkpoint.title}</strong>
+                            <small style={{ color: 'var(--color-muted)', fontSize: '0.7rem' }}>{checkpoint.status.replaceAll('_', ' ')} · {checkpoint.domainName}</small>
+                          </span>
+                        </label>
+                      )) : <small style={{ color: 'var(--color-muted)' }}>No checkpoints owned by this member.</small>}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', borderTop: '1px solid var(--color-border)', paddingTop: '12px' }}>
+                <small style={{ color: 'var(--color-muted)' }}>
+                  {selectedTaskIds.length + selectedCheckpointIds.length} item(s) selected. Approved records remain approved.
+                </small>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <Button type="button" variant="ghost" onClick={() => setIsReassignOpen(false)}>Cancel</Button>
+                  <Button type="submit" variant="primary" disabled={reassignWork.isPending || !reassignTargetId || selectedTaskIds.length + selectedCheckpointIds.length === 0}>
+                    {reassignWork.isPending ? 'Transferring…' : 'Transfer selected work'}
+                  </Button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

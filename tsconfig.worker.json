@@ -10,5 +10,5 @@
     "noEmit": true,
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["worker", "shared"]
+  "include": ["worker", "shared", "tests/unit/github-outbound.test.ts"]
 }

@@ -20,6 +20,7 @@ import {
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../app/auth-context';
+import { AttachmentPanel } from '../../components/attachment-panel';
 import { Button, EmptyState, PageSkeleton, Panel, StatusBadge } from '../../components/ui';
 import { api, ApiError, formatDate } from '../../lib/api';
 
@@ -407,6 +408,18 @@ export function TaskDetailPage() {
                 body="Complete all required checklist items and attach reproducible evidence to request review."
               />
             )}
+          </Panel>
+
+          <Panel>
+            <div className="panel-heading">
+              <div>
+                <h2>Evidence attachments</h2>
+                <p>Private files are stored in object storage with a SHA-256 checksum and auditable download trail.</p>
+              </div>
+            </div>
+            <div style={{ padding: '0 20px 20px' }}>
+              <AttachmentPanel resourceType="task" resourceId={task.id} canUpload={canWork || isAdmin} />
+            </div>
           </Panel>
 
           <Panel>

@@ -54,7 +54,7 @@ export function ChatPage() {
   const channelsQuery = useQuery({
     queryKey: ['collaboration-channels'],
     queryFn: () => api<Channel[]>('/collaboration/channels'),
-    refetchInterval: 5000,
+    refetchInterval: 30_000,
   });
 
   const activeChannelId = selectedChannelId ?? (channelsQuery.data?.[0]?.id ?? null);
@@ -64,7 +64,7 @@ export function ChatPage() {
     queryKey: ['channel-messages', activeChannelId],
     queryFn: () => api<Message[]>(`/collaboration/channels/${activeChannelId}/messages`),
     enabled: Boolean(activeChannelId),
-    refetchInterval: 2500,
+    refetchInterval: 30_000,
   });
 
   // Members list for starting DMs

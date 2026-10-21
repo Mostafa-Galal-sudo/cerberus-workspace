@@ -19,5 +19,5 @@
     "types": ["vite/client", "@testing-library/jest-dom"]
   },
   "include": ["src", "shared", "tests"],
-  "exclude": ["tests/integration"]
+  "exclude": ["tests/integration", "tests/e2e", "tests/unit/github-outbound.test.ts"]
 }

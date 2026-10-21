@@ -6,6 +6,14 @@ CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=
 GITHUB_WEBHOOK_SECRET=
 GITHUB_TOKEN=
+# Optional GitHub App outbound authentication. Use instead of GITHUB_TOKEN when an installation is available.
+GITHUB_APP_ID=
+GITHUB_APP_PRIVATE_KEY=
+GITHUB_APP_INSTALLATION_ID=
+# Optional password-reset email. EMAIL_PROVIDER is resend or cloudflare.
+EMAIL_PROVIDER=
+EMAIL_API_KEY=
+EMAIL_FROM=
 AI_API_KEY=
 # Optional OpenAI-compatible provider. The assistant must also be enabled in Admin Settings.
 AI_BASE_URL=https://api.openai.com/v1

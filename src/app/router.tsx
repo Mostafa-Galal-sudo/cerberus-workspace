@@ -5,6 +5,7 @@ import { AdminGate } from './route-guards';
 import { AppShell } from '../components/app-shell';
 import { PageSkeleton } from '../components/ui';
 import { ActivationPage } from '../features/auth/activation-page';
+import { ForgotPasswordPage } from '../features/auth/forgot-password-page';
 import { LoginPage } from '../features/auth/login-page';
 import { ChangePasswordPage } from '../features/auth/change-password-page';
 import { ResetPasswordPage } from '../features/auth/reset-password-page';
@@ -37,6 +38,7 @@ function Protected() {
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
+  { path: '/forgot-password', element: <ForgotPasswordPage /> },
   { path: '/activate', element: <ActivationPage /> },
   { path: '/reset-password', element: <ResetPasswordPage /> },
   {

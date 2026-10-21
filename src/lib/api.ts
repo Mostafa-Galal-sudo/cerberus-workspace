@@ -12,7 +12,7 @@ export function setCsrfToken(token: string | null) {
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   if (csrfToken && init.method && !['GET', 'HEAD'].includes(init.method)) headers.set('X-CSRF-Token', csrfToken);
   const response = await fetch(`/api/v1${path}`, { ...init, headers, credentials: 'same-origin' });
   const payload = await response.json() as { ok: boolean; data?: T; error?: ApiErrorBody };

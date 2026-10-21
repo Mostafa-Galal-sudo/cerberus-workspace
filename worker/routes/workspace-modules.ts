@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import { decisionSchema, experimentSchema, feedbackSchema, hardwareSchema, issueSchema, wikiSchema, worklogSchema } from '../../shared/schemas/workspace';
 import { requireAuth, requirePasswordChanged, requirePermission, requireRole } from '../middleware/auth';
 import { audit } from '../services/audit';
+import { workspaceEventStatements } from '../services/events';
 import type { Env, Variables } from '../types';
 
 export const workspaceModuleRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -83,7 +84,7 @@ for(const resource of ['bugs','blockers'] as const){
 }
 
 workspaceModuleRoutes.get('/supervisor/feedback/:memberId',requireRole('project_supervisor','super_admin'),async(c)=>{const r=await c.env.DB.prepare(`SELECT f.*,u.display_name AS supervisorName FROM supervisor_feedback f JOIN users u ON u.id=f.supervisor_id WHERE f.member_id=? ORDER BY f.created_at DESC`).bind(c.req.param('memberId')).all();return c.json({ok:true,data:r.results});});
-workspaceModuleRoutes.post('/supervisor/feedback/:memberId',requireRole('project_supervisor'),async(c)=>{const p=feedbackSchema.safeParse(await c.req.json().catch(()=>null));if(!p.success)return validation(c,'Feedback is invalid',p.error.flatten().fieldErrors);const d=p.data,id=crypto.randomUUID();await c.env.DB.batch([c.env.DB.prepare(`INSERT INTO supervisor_feedback (id,supervisor_id,member_id,resource_type,resource_id,body) VALUES (?,?,?,?,?,?)`).bind(id,c.get('user').id,c.req.param('memberId'),d.resourceType??null,d.resourceId??null,d.body),c.env.DB.prepare(`INSERT INTO notifications (id,user_id,type,title,body,resource_type,resource_id) VALUES (?,?,'supervisor.feedback','Supervisor feedback',?,'supervisor_feedback',?)`).bind(crypto.randomUUID(),c.req.param('memberId'),d.body,id)]);return c.json({ok:true,data:{id}},201);});
+workspaceModuleRoutes.post('/supervisor/feedback/:memberId',requireRole('project_supervisor'),async(c)=>{const p=feedbackSchema.safeParse(await c.req.json().catch(()=>null));if(!p.success)return validation(c,'Feedback is invalid',p.error.flatten().fieldErrors);const d=p.data,id=crypto.randomUUID();await c.env.DB.batch([c.env.DB.prepare(`INSERT INTO supervisor_feedback (id,supervisor_id,member_id,resource_type,resource_id,body) VALUES (?,?,?,?,?,?)`).bind(id,c.get('user').id,c.req.param('memberId'),d.resourceType??null,d.resourceId??null,d.body),c.env.DB.prepare(`INSERT INTO notifications (id,user_id,type,title,body,resource_type,resource_id) VALUES (?,?,'supervisor.feedback','Supervisor feedback',?,'supervisor_feedback',?)`).bind(crypto.randomUUID(),c.req.param('memberId'),d.body,id),...workspaceEventStatements(c.env,{type:'supervisor.feedback',userIds:[c.req.param('memberId')],payload:{feedbackId:id,body:d.body}})]);return c.json({ok:true,data:{id}},201);});
 
 function validation(c: Context, message: string, fields?: unknown) { return c.json({ ok: false, error: { code: 'VALIDATION_ERROR', message, fields } }, 422); }
 function notFound(c: Context, name: string) { return c.json({ ok: false, error: { code: 'NOT_FOUND', message: `${name} not found` } }, 404); }

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
+import { emailDeliveryConfigured, sendEmail } from '../services/email';
 import { randomToken, sha256 } from '../services/security';
 import type { Env, Variables } from '../types';
 
@@ -85,9 +86,101 @@ userRoutes.post('/:id/reissue-invitation', requirePermission('workspace.admin'),
   });
 });
 
+userRoutes.post('/:id/reassign-work', requirePermission('workspace.admin'), async (context) => {
+  const sourceId = context.req.param('id');
+  const body = await context.req.json<{
+    targetUserId?: string;
+    taskIds?: string[];
+    checkpointIds?: string[];
+  }>().catch(() => ({} as { targetUserId?: string; taskIds?: string[]; checkpointIds?: string[] }));
+
+  const targetId = body.targetUserId?.trim();
+  const taskIds = [...new Set(body.taskIds ?? [])].filter(Boolean);
+  const checkpointIds = [...new Set(body.checkpointIds ?? [])].filter(Boolean);
+
+  if (!targetId) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Choose a target member' } }, 422);
+  }
+  if (targetId === sourceId) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Choose a different target member' } }, 422);
+  }
+  if (taskIds.length === 0 && checkpointIds.length === 0) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Select at least one task or checkpoint' } }, 422);
+  }
+  if (taskIds.length > 100 || checkpointIds.length > 100) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Reassign at most 100 items at a time' } }, 422);
+  }
+
+  const [source, target] = await Promise.all([
+    context.env.DB.prepare(`SELECT id, display_name FROM users WHERE id=? AND archived_at IS NULL`).bind(sourceId).first<{ id: string; display_name: string }>(),
+    context.env.DB.prepare(`SELECT id, display_name, status FROM users WHERE id=? AND archived_at IS NULL`).bind(targetId).first<{ id: string; display_name: string; status: string }>(),
+  ]);
+  if (!source) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Source member not found' } }, 404);
+  if (!target) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Target member not found' } }, 404);
+  if (target.status !== 'active') {
+    return context.json({ ok: false, error: { code: 'TARGET_NOT_ACTIVE', message: 'Reactivate the target account before assigning work' } }, 409);
+  }
+  const targetIsContributor = await context.env.DB.prepare(`SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+    WHERE ur.user_id=? AND r.name IN ('team_member','super_admin','technical_lead') LIMIT 1`).bind(targetId).first();
+  if (!targetIsContributor) {
+    return context.json({ ok: false, error: { code: 'TARGET_NOT_CONTRIBUTOR', message: 'Work can only be transferred to a team member or technical lead' } }, 409);
+  }
+
+  const statements: D1PreparedStatement[] = [];
+  let reassignedTasks = 0;
+  let reassignedCheckpoints = 0;
+
+  if (taskIds.length > 0) {
+    const placeholders = taskIds.map(() => '?').join(',');
+    const owned = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM tasks WHERE assignee_id=? AND archived_at IS NULL AND id IN (${placeholders})`)
+      .bind(sourceId, ...taskIds).first<{ count: number }>();
+    reassignedTasks = owned?.count ?? 0;
+    if (reassignedTasks > 0) {
+      statements.push(context.env.DB.prepare(`UPDATE tasks SET assignee_id=?, updated_at=unixepoch()
+        WHERE assignee_id=? AND archived_at IS NULL AND id IN (${placeholders})`)
+        .bind(targetId, sourceId, ...taskIds));
+    }
+  }
+
+  if (checkpointIds.length > 0) {
+    const placeholders = checkpointIds.map(() => '?').join(',');
+    const owned = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM checkpoints WHERE owner_id=? AND archived_at IS NULL AND id IN (${placeholders})`)
+      .bind(sourceId, ...checkpointIds).first<{ count: number }>();
+    reassignedCheckpoints = owned?.count ?? 0;
+    if (reassignedCheckpoints > 0) {
+      statements.push(context.env.DB.prepare(`UPDATE checkpoints SET owner_id=?, updated_at=unixepoch()
+        WHERE owner_id=? AND archived_at IS NULL AND id IN (${placeholders})`)
+        .bind(targetId, sourceId, ...checkpointIds));
+    }
+  }
+
+  if (statements.length === 0) {
+    return context.json({ ok: false, error: { code: 'NO_OWNED_WORK', message: 'None of the selected items are owned by this member' } }, 409);
+  }
+
+  const total = reassignedTasks + reassignedCheckpoints;
+  statements.push(context.env.DB.prepare(`INSERT INTO notifications (id, user_id, type, title, body, resource_type, resource_id)
+    VALUES (?, ?, 'work.reassigned', 'Work reassigned to you', ?, 'user', ?)`)
+    .bind(crypto.randomUUID(), targetId,
+      `${source.display_name} transferred ${reassignedTasks} task(s) and ${reassignedCheckpoints} checkpoint(s) to you.`,
+      sourceId));
+  statements.push(context.env.DB.prepare(`INSERT INTO workspace_events (event_type, user_id, payload_json)
+    VALUES ('work.reassigned', ?, ?)`)
+    .bind(targetId, JSON.stringify({ sourceId, targetId, reassignedTasks, reassignedCheckpoints })));
+  statements.push(audit(context.env, context.get('user').id, 'user.work_reassigned', 'user', sourceId, {
+    targetId, taskIds, checkpointIds, reassignedTasks, reassignedCheckpoints,
+  }));
+
+  await context.env.DB.batch(statements);
+  return context.json({
+    ok: true,
+    data: { reassignedTasks, reassignedCheckpoints, total, targetName: target.display_name },
+  });
+});
+
 userRoutes.post('/:id/reset-password', requirePermission('workspace.admin'), async (context) => {
   const userId = context.req.param('id');
-  const user = await context.env.DB.prepare(`SELECT id, email, status FROM users WHERE id=? AND archived_at IS NULL`).bind(userId).first<{ id: string; email: string; status: string }>();
+  const user = await context.env.DB.prepare(`SELECT id, email, display_name, status FROM users WHERE id=? AND archived_at IS NULL`).bind(userId).first<{ id: string; email: string; display_name: string; status: string }>();
   if (!user) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
   if (user.status !== 'active') {
     return context.json({ ok: false, error: { code: 'ACCOUNT_NOT_ACTIVE', message: 'Reactivate the account before issuing a password reset' } }, 409);
@@ -105,12 +198,25 @@ userRoutes.post('/:id/reset-password', requirePermission('workspace.admin'), asy
     audit(context.env, context.get('user').id, 'user.password_reset_issued', 'user', userId, { resetId }),
   ]);
 
+  const baseUrl = (context.env.APP_ORIGIN ?? new URL(context.req.url).origin).replace(/\/+$/, '');
+  const resetUrl = `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`;
+  let delivery: 'email' | 'manual' = 'manual';
+  if (emailDeliveryConfigured(context.env)) {
+    const result = await sendEmail(context.env, {
+      to: user.email,
+      subject: 'CERBERUS workspace password reset',
+      text: `Hello ${user.display_name},\n\nAn administrator issued a one-time password reset for your CERBERUS workspace account.\n\nUse this link within one hour:\n${resetUrl}\n\nIf you did not expect this reset, contact the workspace administrator.\n`,
+    });
+    if (result.sent) delivery = 'email';
+  }
+
   return context.json({
     ok: true,
     data: {
       token,
       resetUrl: `/reset-password?token=${encodeURIComponent(token)}`,
       expiresAt,
+      delivery,
     },
   });
 });

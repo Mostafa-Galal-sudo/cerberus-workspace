@@ -9,6 +9,10 @@
     "database_id": "00000000-0000-0000-0000-000000000000",
     "migrations_dir": "db/migrations"
   }],
+  "r2_buckets": [{
+    "binding": "ATTACHMENTS",
+    "bucket_name": "cerberus-attachments-test"
+  }],
   "vars": {
     "APP_ENV": "test",
     "SETUP_TOKEN": "integration-setup-token"

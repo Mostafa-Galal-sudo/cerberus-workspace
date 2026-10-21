@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { reviewSchema } from '../../shared/schemas/tasks';
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
+import { workspaceEventStatements } from '../services/events';
 import type { Env, Variables } from '../types';
 
 interface ReviewQueueRow {
@@ -127,6 +128,11 @@ reviewRoutes.post('/:id', async (context) => {
     taskId: submission.task_id,
     checkpointId: submission.checkpoint_id,
     targetType,
+  }));
+  statements.push(...workspaceEventStatements(context.env, {
+    type: `review.${parsed.data.result}`,
+    userIds: [submission.submitted_by],
+    payload: { submissionId: submission.id, taskId: submission.task_id, checkpointId: submission.checkpoint_id, targetType },
   }));
 
   await context.env.DB.batch(statements);

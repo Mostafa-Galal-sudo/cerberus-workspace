@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   Cpu,
   Download,
+  FileText,
   Layers,
   Printer,
   ShieldAlert,
@@ -73,6 +74,12 @@ export function ReportsPage() {
       ? '/api/v1/reports/hardware.csv'
       : '/api/v1/reports/blockers.csv';
 
+  const pdfPath = reportType === 'progress'
+    ? '/api/v1/reports/progress.pdf'
+    : reportType === 'hardware'
+      ? '/api/v1/reports/hardware.pdf'
+      : '/api/v1/reports/blockers.pdf';
+
   return (
     <div className="page reports-page">
       {/* Screen Toolbar (hidden in print) */}
@@ -90,6 +97,13 @@ export function ReportsPage() {
             download
           >
             <Download size={16} /> Export CSV
+          </a>
+          <a
+            className="button inline-flex items-center justify-center gap-2 rounded-md font-semibold transition-colors border border-steel bg-graphite text-slate-100 hover:bg-steel/60 h-8 px-3 text-xs"
+            href={pdfPath}
+            download
+          >
+            <FileText size={16} /> Download server PDF
           </a>
           <Button variant="primary" size="sm" onClick={handlePrint}>
             <Printer size={16} /> Print / Save as PDF

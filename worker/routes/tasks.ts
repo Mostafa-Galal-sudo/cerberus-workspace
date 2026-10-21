@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { createTaskSchema, submissionSchema, updateTaskStatusSchema } from '../../shared/schemas/tasks';
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
+import { workspaceEventStatements } from '../services/events';
 import type { Env, Variables } from '../types';
 
 export const taskRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -188,6 +189,17 @@ taskRoutes.post('/', requirePermission('task.manage'), async (context) => {
     audit(context.env, context.get('user').id, 'task.created', 'task', id),
   ];
 
+  if (input.assigneeId) {
+    statements.push(context.env.DB.prepare(`INSERT INTO notifications (id, user_id, type, title, body, resource_type, resource_id)
+      VALUES (?, ?, 'task.assigned', 'New task assigned', ?, 'task', ?)`)
+      .bind(crypto.randomUUID(), input.assigneeId, `You were assigned: ${input.title}`, id));
+    statements.push(...workspaceEventStatements(context.env, {
+      type: 'task.assigned',
+      userIds: [input.assigneeId],
+      payload: { taskId: id, title: input.title },
+    }));
+  }
+
   if (input.checkpointId) {
     statements.push(context.env.DB.prepare(`INSERT INTO checkpoint_tasks (checkpoint_id, task_id) VALUES (?, ?)`).bind(input.checkpointId, id));
   }
@@ -203,7 +215,7 @@ taskRoutes.post('/', requirePermission('task.manage'), async (context) => {
 
 taskRoutes.patch('/:id', requirePermission('task.manage'), async (context) => {
   const taskId = context.req.param('id');
-  const task = await context.env.DB.prepare(`SELECT id FROM tasks WHERE id=? AND archived_at IS NULL`).bind(taskId).first();
+  const task = await context.env.DB.prepare(`SELECT id, title, assignee_id FROM tasks WHERE id=? AND archived_at IS NULL`).bind(taskId).first<{ id: string; title: string; assignee_id: string | null }>();
   if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
 
   const rawBody = await context.req.json().catch(() => ({}));
@@ -242,10 +254,25 @@ taskRoutes.patch('/:id', requirePermission('task.manage'), async (context) => {
   updates.push('updated_at = unixepoch()');
   binds.push(taskId);
 
-  await context.env.DB.batch([
+  const nextAssignee = typeof body.assigneeId === 'string' && body.assigneeId.trim() ? body.assigneeId.trim() : null;
+  const assignmentChanged = Object.prototype.hasOwnProperty.call(body, 'assigneeId') && nextAssignee !== task.assignee_id;
+  const statements: D1PreparedStatement[] = [
     context.env.DB.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).bind(...binds),
     audit(context.env, context.get('user').id, 'task.updated', 'task', taskId),
-  ]);
+  ];
+
+  if (assignmentChanged && nextAssignee) {
+    statements.push(context.env.DB.prepare(`INSERT INTO notifications (id, user_id, type, title, body, resource_type, resource_id)
+      VALUES (?, ?, 'task.assigned', 'Task assigned to you', ?, 'task', ?)`)
+      .bind(crypto.randomUUID(), nextAssignee, `You were assigned: ${task.title}`, taskId));
+    statements.push(...workspaceEventStatements(context.env, {
+      type: 'task.assigned',
+      userIds: [nextAssignee],
+      payload: { taskId, title: task.title },
+    }));
+  }
+
+  await context.env.DB.batch(statements);
 
   return context.json({ ok: true, data: { updated: true } });
 });
@@ -457,6 +484,12 @@ taskRoutes.post('/:id/submissions', async (context) => {
     SELECT lower(hex(randomblob(16))), user_id, 'review.requested', 'Task ready for review', ?, 'submission', ?
     FROM user_roles WHERE role_id='role_admin'`)
     .bind(`A submission for task ${task.id} is ready for review.`, submissionId));
+  const admins = await context.env.DB.prepare(`SELECT user_id FROM user_roles WHERE role_id='role_admin'`).all<{ user_id: string }>();
+  statements.push(...workspaceEventStatements(context.env, {
+    type: 'review.requested',
+    userIds: admins.results.map((row) => row.user_id),
+    payload: { taskId: task.id, submissionId },
+  }));
   await context.env.DB.batch(statements);
   return context.json({ ok: true, data: { id: submissionId } }, 201);
 });

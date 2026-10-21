@@ -23,6 +23,10 @@ export const passwordResetSchema = z.object({
     .regex(/[^A-Za-z0-9]/, 'Include a symbol'),
 });
 
+export const requestPasswordResetSchema = z.object({
+  email: z.email().max(254),
+});
+
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(12).max(128),
   newPassword: z.string().min(12).max(128)

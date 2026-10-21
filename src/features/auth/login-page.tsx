@@ -88,7 +88,7 @@ export function LoginPage() {
 
           <p className="auth-help">
             <LockKeyhole size={14} />
-            <span>Invite-only engineering platform. Lost your password? Ask an administrator for a one-time <Link to="/reset-password">reset link</Link>.</span>
+            <span>Invite-only engineering platform. Lost your password? <Link to="/forgot-password">Request a one-time reset link</Link>.</span>
           </p>
         </form>
       </section>

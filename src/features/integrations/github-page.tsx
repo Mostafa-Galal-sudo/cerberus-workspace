@@ -5,6 +5,7 @@ import {
   GitCommit,
   GitPullRequest,
   Play,
+  RefreshCw,
   Settings,
   ShieldCheck,
   X,
@@ -19,6 +20,11 @@ interface GithubStatus {
   repository: string;
   syncBranch: string;
   hasSecret: boolean;
+  authMode: 'app' | 'token' | 'none';
+  outboundReady: boolean;
+  lastSyncAt?: number | null;
+  lastSyncStatus?: string | null;
+  lastSyncCount?: number;
   updatedAt?: number;
   events: Array<{
     id: string;
@@ -44,10 +50,17 @@ export function GithubPage() {
   const queryClient = useQueryClient();
 
   const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [isPrOpen, setIsPrOpen] = useState(false);
   const [repoName, setRepoName] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
   const [syncBranch, setSyncBranch] = useState('main');
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  const [prTaskId, setPrTaskId] = useState('');
+  const [prTitle, setPrTitle] = useState('');
+  const [prHead, setPrHead] = useState('');
+  const [prBase, setPrBase] = useState('main');
+  const [prBody, setPrBody] = useState('');
+  const [prDraft, setPrDraft] = useState(false);
 
   const isAdmin = user?.roles.includes('super_admin');
 
@@ -88,6 +101,45 @@ export function GithubPage() {
     onError: (err) => setActionFeedback(err instanceof ApiError ? err.message : 'Simulation failed'),
   });
 
+  const syncRepository = useMutation({
+    mutationFn: () => api<{ repository: string; pullRequests: number; branches: number; linked: number }>('/github/sync', { method: 'POST' }),
+    onSuccess: (result) => {
+      setActionFeedback(`Synced ${result.repository}: ${result.pullRequests} open pull request(s), ${result.branches} branch(es), ${result.linked} task link(s).`);
+      void queryClient.invalidateQueries({ queryKey: ['github-status'] });
+    },
+    onError: (err) => setActionFeedback(err instanceof ApiError ? err.message : 'Repository sync failed'),
+  });
+
+  const createPr = useMutation({
+    mutationFn: () => api<{ number: number; url: string }>('/github/pull-request', {
+      method: 'POST',
+      body: JSON.stringify({
+        taskId: prTaskId.trim(),
+        title: prTitle.trim(),
+        head: prHead.trim(),
+        base: prBase.trim() || undefined,
+        body: prBody.trim() || undefined,
+        draft: prDraft,
+      }),
+    }),
+    onSuccess: (result) => {
+      setIsPrOpen(false);
+      setPrTaskId('');
+      setPrTitle('');
+      setPrHead('');
+      setPrBody('');
+      setPrDraft(false);
+      setActionFeedback(`Pull request #${result.number} opened and linked to its task.`);
+      void queryClient.invalidateQueries({ queryKey: ['github-status'] });
+    },
+    onError: (err) => setActionFeedback(err instanceof ApiError ? err.message : 'Pull request creation failed'),
+  });
+
+  const handleOpenPr = () => {
+    setPrBase(query.data?.syncBranch ?? 'main');
+    setIsPrOpen(true);
+  };
+
   const handleOpenConfig = () => {
     if (query.data) {
       setRepoName(query.data.repository);
@@ -111,7 +163,25 @@ export function GithubPage() {
         </div>
 
         {isAdmin && (
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => syncRepository.mutate()}
+              disabled={syncRepository.isPending || !data?.outboundReady}
+              title={data?.outboundReady ? 'Sync open pull requests from GitHub' : 'Configure GITHUB_TOKEN or GitHub App credentials first'}
+            >
+              <RefreshCw size={14} /> {syncRepository.isPending ? 'Syncing…' : 'Sync Repository'}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleOpenPr}
+              disabled={!data?.outboundReady}
+              title={data?.outboundReady ? 'Open a pull request linked to a task' : 'Configure GITHUB_TOKEN or GitHub App credentials first'}
+            >
+              <GitPullRequest size={14} /> Open Pull Request
+            </Button>
             <Button variant="secondary" size="sm" onClick={() => simulateEvent.mutate()} disabled={simulateEvent.isPending}>
               <Play size={14} /> Simulate Commit Webhook
             </Button>
@@ -161,6 +231,21 @@ export function GithubPage() {
             <small style={{ color: 'var(--color-muted)', display: 'block' }}>Linked Task Commits</small>
             <strong style={{ fontSize: '0.95rem' }}>{data?.links.length ?? 0} Recorded</strong>
             <small style={{ color: 'var(--color-muted)', display: 'block', fontSize: '0.75rem' }}>Events logged: {data?.events.length ?? 0}</small>
+          </div>
+        </Panel>
+
+        <Panel style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '16px' }}>
+          <div style={{ padding: '10px', background: 'var(--color-surface-subtle)', borderRadius: '6px' }}>
+            <RefreshCw size={22} style={{ color: data?.outboundReady ? 'var(--color-status-approved)' : 'var(--color-magma-flame)' }} />
+          </div>
+          <div>
+            <small style={{ color: 'var(--color-muted)', display: 'block' }}>Outbound GitHub Authentication</small>
+            <strong style={{ fontSize: '0.95rem' }}>
+              {data?.authMode === 'app' ? 'GitHub App installation' : data?.authMode === 'token' ? 'Personal access token' : 'Not configured'}
+            </strong>
+            <small style={{ color: 'var(--color-muted)', display: 'block', fontSize: '0.75rem' }}>
+              {data?.lastSyncAt ? `Last sync ${formatDate(data.lastSyncAt)} · ${data.lastSyncStatus ?? 'unknown'} · ${data.lastSyncCount ?? 0} PRs` : 'Repository has not been synced yet'}
+            </small>
           </div>
         </Panel>
       </div>
@@ -245,6 +330,95 @@ export function GithubPage() {
           )}
         </Panel>
       </div>
+
+      {/* Pull Request Modal */}
+      {isPrOpen && (
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}>
+          <div className="modal-card" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', maxWidth: '560px', width: '100%', maxHeight: '88vh', overflowY: 'auto', padding: '24px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--color-border)', paddingBottom: '10px' }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Open a linked pull request</h2>
+                <p style={{ margin: '4px 0 0', fontSize: '0.78rem', color: 'var(--color-muted)' }}>The task reference is appended to the PR body and the artifact is recorded in provenance.</p>
+              </div>
+              <Button variant="ghost" size="sm" onClick={() => setIsPrOpen(false)}><X size={18} /></Button>
+            </div>
+
+            <form onSubmit={(event) => { event.preventDefault(); createPr.mutate(); }} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <label>
+                <small>Task ID *</small>
+                <input
+                  type="text"
+                  required
+                  value={prTaskId}
+                  onChange={(event) => setPrTaskId(event.target.value)}
+                  placeholder="task_..."
+                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit' }}
+                />
+              </label>
+
+              <label>
+                <small>Pull request title *</small>
+                <input
+                  type="text"
+                  required
+                  maxLength={180}
+                  value={prTitle}
+                  onChange={(event) => setPrTitle(event.target.value)}
+                  placeholder="feat(firmware): ..."
+                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit' }}
+                />
+              </label>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <label>
+                  <small>Head branch *</small>
+                  <input
+                    type="text"
+                    required
+                    value={prHead}
+                    onChange={(event) => setPrHead(event.target.value)}
+                    placeholder="feature/telemetry"
+                    style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit' }}
+                  />
+                </label>
+                <label>
+                  <small>Base branch</small>
+                  <input
+                    type="text"
+                    value={prBase}
+                    onChange={(event) => setPrBase(event.target.value)}
+                    placeholder="main"
+                    style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit' }}
+                  />
+                </label>
+              </div>
+
+              <label>
+                <small>Description</small>
+                <textarea
+                  rows={4}
+                  value={prBody}
+                  onChange={(event) => setPrBody(event.target.value)}
+                  placeholder="Implementation notes, evidence references and validation summary…"
+                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit', resize: 'vertical' }}
+                />
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <input type="checkbox" checked={prDraft} onChange={(event) => setPrDraft(event.target.checked)} />
+                <small>Create as draft pull request</small>
+              </label>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
+                <Button type="button" variant="ghost" onClick={() => setIsPrOpen(false)}>Cancel</Button>
+                <Button type="submit" variant="primary" disabled={createPr.isPending || !prTaskId.trim() || !prTitle.trim() || !prHead.trim()}>
+                  {createPr.isPending ? 'Opening…' : 'Open pull request'}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Configuration Modal */}
       {isConfigOpen && (

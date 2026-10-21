@@ -93,7 +93,7 @@ export async function call(session: Session | null, path: string, init: RequestI
     headers.set('cookie', session.cookie);
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) headers.set('x-csrf-token', session.csrf);
   }
-  if (init.body !== undefined && !headers.has('content-type')) headers.set('content-type', 'application/json');
+  if (init.body !== undefined && !(init.body instanceof FormData) && !headers.has('content-type')) headers.set('content-type', 'application/json');
 
   return app.request(path, { ...init, headers }, bindings);
 }
