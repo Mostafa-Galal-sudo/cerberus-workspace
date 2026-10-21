@@ -348,6 +348,89 @@ taskRoutes.patch('/:id/checklist/:itemId', async (context) => {
   return context.json({ ok: true, data: { completed: body.completed === true } });
 });
 
+taskRoutes.get('/:id/comments', async (context) => {
+  const rows = await context.env.DB.prepare(`SELECT c.id, c.task_id AS taskId, c.parent_id AS parentId, c.body,
+    c.created_at AS createdAt, c.updated_at AS updatedAt, c.deleted_at AS deletedAt,
+    c.author_id AS authorId, u.display_name AS authorName
+    FROM task_comments c JOIN users u ON u.id=c.author_id
+    WHERE c.task_id=? AND c.deleted_at IS NULL
+    ORDER BY c.created_at ASC`).bind(context.req.param('id')).all<{
+      id: string; taskId: string; parentId: string | null; body: string; createdAt: number;
+      updatedAt: number; deletedAt: number | null; authorId: string; authorName: string;
+    }>();
+
+  return context.json({
+    ok: true,
+    data: rows.results.map((row) => ({ ...row, edited: row.updatedAt > row.createdAt })),
+  });
+});
+
+taskRoutes.post('/:id/comments', async (context) => {
+  const raw = await context.req.json<{ body?: string; parentId?: string | null }>().catch(() => ({} as { body?: string; parentId?: string | null }));
+  const body = raw.body?.trim();
+  if (!body || body.length < 1 || body.length > 4000) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Comment body must be between 1 and 4000 characters' } }, 422);
+  }
+
+  const task = await context.env.DB.prepare(`SELECT assignee_id FROM tasks WHERE id=? AND archived_at IS NULL`)
+    .bind(context.req.param('id')).first<{ assignee_id: string | null }>();
+  if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
+
+  const user = context.get('user');
+  if (task.assignee_id !== user.id && !user.permissions.includes('task.manage')) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the assignee or an administrator can comment on this task' } }, 403);
+  }
+
+  if (raw.parentId) {
+    const parent = await context.env.DB.prepare(`SELECT id FROM task_comments WHERE id=? AND task_id=? AND deleted_at IS NULL`)
+      .bind(raw.parentId, context.req.param('id')).first();
+    if (!parent) return context.json({ ok: false, error: { code: 'PARENT_NOT_FOUND', message: 'Parent comment does not belong to this task' } }, 422);
+  }
+
+  const id = crypto.randomUUID();
+  await context.env.DB.prepare(`INSERT INTO task_comments (id, task_id, author_id, parent_id, body) VALUES (?, ?, ?, ?, ?)`)
+    .bind(id, context.req.param('id'), user.id, raw.parentId ?? null, body).run();
+
+  return context.json({ ok: true, data: { id } }, 201);
+});
+
+taskRoutes.patch('/:id/comments/:commentId', async (context) => {
+  const raw = await context.req.json<{ body?: string }>().catch(() => ({} as { body?: string }));
+  const body = raw.body?.trim();
+  if (!body || body.length < 1 || body.length > 4000) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Comment body must be between 1 and 4000 characters' } }, 422);
+  }
+
+  const comment = await context.env.DB.prepare(`SELECT author_id FROM task_comments WHERE id=? AND task_id=? AND deleted_at IS NULL`)
+    .bind(context.req.param('commentId'), context.req.param('id')).first<{ author_id: string }>();
+  if (!comment) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Comment not found' } }, 404);
+
+  const user = context.get('user');
+  if (comment.author_id !== user.id && !user.permissions.includes('task.manage')) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the author or an administrator can edit this comment' } }, 403);
+  }
+
+  await context.env.DB.prepare(`UPDATE task_comments SET body=?, updated_at=unixepoch() WHERE id=?`).bind(body, context.req.param('commentId')).run();
+  return context.json({ ok: true, data: { updated: true } });
+});
+
+taskRoutes.delete('/:id/comments/:commentId', async (context) => {
+  const comment = await context.env.DB.prepare(`SELECT author_id FROM task_comments WHERE id=? AND task_id=? AND deleted_at IS NULL`)
+    .bind(context.req.param('commentId'), context.req.param('id')).first<{ author_id: string }>();
+  if (!comment) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Comment not found' } }, 404);
+
+  const user = context.get('user');
+  if (comment.author_id !== user.id && !user.permissions.includes('task.manage')) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the author or an administrator can delete this comment' } }, 403);
+  }
+
+  await context.env.DB.batch([
+    context.env.DB.prepare(`UPDATE task_comments SET body='[deleted]', deleted_at=unixepoch(), updated_at=unixepoch() WHERE id=?`).bind(context.req.param('commentId')),
+    audit(context.env, user.id, 'task.comment_deleted', 'task_comment', context.req.param('commentId'), { taskId: context.req.param('id') }),
+  ]);
+  return context.json({ ok: true, data: { deleted: true } });
+});
+
 taskRoutes.post('/:id/submissions', async (context) => {
   const parsed = submissionSchema.safeParse(await context.req.json().catch(() => null));
   if (!parsed.success) return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Submission requires a summary and evidence', fields: parsed.error.flatten().fieldErrors } }, 422);

@@ -2,7 +2,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { ArrowRight, LockKeyhole, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, Link, useNavigate } from 'react-router-dom';
 import { z } from 'zod';
 import { useAuth } from '../../app/auth-context';
 import { Button, Field } from '../../components/ui';
@@ -88,7 +88,7 @@ export function LoginPage() {
 
           <p className="auth-help">
             <LockKeyhole size={14} />
-            <span>Invite-only engineering platform. Contact the workspace administrator if your credentials need reissuance.</span>
+            <span>Invite-only engineering platform. Lost your password? Ask an administrator for a one-time <Link to="/reset-password">reset link</Link>.</span>
           </p>
         </form>
       </section>

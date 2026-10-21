@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { requireAuth, requirePasswordChanged } from '../middleware/auth';
+import { requestProviderReply } from '../services/ai';
 import type { Env, Variables } from '../types';
 
 export const assistantRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -48,11 +49,26 @@ assistantRoutes.post('/chat', async (context) => {
     ...relevantDecisions.map((d) => ({ type: 'decision', title: d.title, meta: d.status })),
   ].slice(0, 5);
 
-  // Generate verified synthesis
-  let reply = '';
-  const lowerMsg = message.toLowerCase();
+  // Generate verified synthesis. The optional provider adapter is tried first; on
+  // any failure the deterministic workspace-grounded response remains available.
+  const providerReply = await requestProviderReply(context.env, message, {
+    tasks: tasks.results,
+    wiki: wiki.results,
+    blockers: blockers.results,
+    decisions: decisions.results,
+    members: members.results,
+    sources,
+    user: { displayName: user.displayName, roles: user.roles },
+  });
 
-  if (lowerMsg.includes('blocker') || lowerMsg.includes('obstacle') || lowerMsg.includes('issue')) {
+  let reply = providerReply?.reply ?? '';
+  const provider = providerReply?.provider ?? 'cerberus-internal';
+  const model = providerReply?.model ?? 'sentinel-rag-v1';
+
+  if (!reply) {
+    const lowerMsg = message.toLowerCase();
+
+    if (lowerMsg.includes('blocker') || lowerMsg.includes('obstacle') || lowerMsg.includes('issue')) {
     if (blockers.results.length > 0) {
       reply = `Active system blockers currently recorded in the sentinel ledger:\n\n` +
         blockers.results.map((b) => `• [${b.severity.toUpperCase()}] ${b.title} (${b.status})`).join('\n') +
@@ -88,14 +104,15 @@ assistantRoutes.post('/chat', async (context) => {
         ? sources.map((s) => `• [${s.type.toUpperCase()}] ${s.title} (${s.meta})`).join('\n')
         : `• Primary firmware, ML IDS, network visibility, RF CSI, backend API, and SOC dashboard disciplines are active.\n• Verification criteria require independent review before state transitions.`) +
       `\n\nLet me know if you would like me to inspect a specific task checklist, audit evidence requirements, or compile a progress report.`;
+    }
   }
 
   // Record usage telemetry in assistant_usage
   const usageId = crypto.randomUUID();
   await context.env.DB.prepare(`INSERT INTO assistant_usage
     (id, user_id, provider, model, input_characters, output_characters, source_count, status)
-    VALUES (?, ?, 'cerberus-internal', 'sentinel-rag-v1', ?, ?, ?, 'completed')`)
-    .bind(usageId, user.id, message.length, reply.length, sources.length).run();
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'completed')`)
+    .bind(usageId, user.id, provider, model, message.length, reply.length, sources.length).run();
 
   return context.json({
     ok: true,

@@ -10,6 +10,8 @@ export interface Env {
   GITHUB_WEBHOOK_SECRET?: string;
   GITHUB_TOKEN?: string;
   AI_API_KEY?: string;
+  AI_BASE_URL?: string;
+  AI_MODEL?: string;
 }
 
 export interface AuthUser {

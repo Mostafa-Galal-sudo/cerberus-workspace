@@ -56,6 +56,18 @@ interface MemberOption {
   specialization: string;
 }
 
+interface TaskComment {
+  id: string;
+  taskId: string;
+  parentId: string | null;
+  body: string;
+  createdAt: number;
+  updatedAt: number;
+  authorId: string;
+  authorName: string;
+  edited: boolean;
+}
+
 export function TaskDetailPage() {
   const { taskId } = useParams();
   const { user } = useAuth();
@@ -69,6 +81,9 @@ export function TaskDetailPage() {
   const [selectedDepId, setSelectedDepId] = useState('');
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [activeEditTab, setActiveEditTab] = useState<'core' | 'execution' | 'criteria'>('core');
+  const [commentBody, setCommentBody] = useState('');
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentBody, setEditingCommentBody] = useState('');
 
   // Comprehensive Edit fields
   const [editTitle, setEditTitle] = useState('');
@@ -97,6 +112,47 @@ export function TaskDetailPage() {
     queryKey: ['members-short'],
     queryFn: () => api<MemberOption[]>('/users'),
     enabled: isEditOpen,
+  });
+
+  const commentsQuery = useQuery({
+    queryKey: ['task-comments', taskId],
+    queryFn: () => api<TaskComment[]>(`/tasks/${taskId}/comments`),
+    enabled: Boolean(taskId),
+  });
+
+  const addComment = useMutation({
+    mutationFn: () =>
+      api(`/tasks/${taskId}/comments`, { method: 'POST', body: JSON.stringify({ body: commentBody }) }),
+    onSuccess: () => {
+      setCommentBody('');
+      setMessage('Discussion comment recorded.');
+      setErrorMessage('');
+      void client.invalidateQueries({ queryKey: ['task-comments', taskId] });
+    },
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Comment could not be added'),
+  });
+
+  const editComment = useMutation({
+    mutationFn: (commentId: string) =>
+      api(`/tasks/${taskId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify({ body: editingCommentBody }) }),
+    onSuccess: () => {
+      setEditingCommentId(null);
+      setEditingCommentBody('');
+      setMessage('Comment updated.');
+      setErrorMessage('');
+      void client.invalidateQueries({ queryKey: ['task-comments', taskId] });
+    },
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Comment could not be updated'),
+  });
+
+  const deleteComment = useMutation({
+    mutationFn: (commentId: string) => api(`/tasks/${taskId}/comments/${commentId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      setMessage('Comment retracted.');
+      setErrorMessage('');
+      void client.invalidateQueries({ queryKey: ['task-comments', taskId] });
+    },
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Comment could not be deleted'),
   });
 
   const checklist = useMutation({
@@ -193,6 +249,7 @@ export function TaskDetailPage() {
 
   const { task } = query.data;
   const canWork = task.assignee_id === user?.id && !isSupervisor;
+  const canComment = !isSupervisor && (canWork || isAdmin);
   const completedChecklistCount = query.data.checklist.filter((item) => item.completed_at).length;
   const totalChecklistCount = query.data.checklist.length;
   const checklistPercent = totalChecklistCount ? Math.round((completedChecklistCount / totalChecklistCount) * 100) : 0;
@@ -350,6 +407,108 @@ export function TaskDetailPage() {
                 body="Complete all required checklist items and attach reproducible evidence to request review."
               />
             )}
+          </Panel>
+
+          <Panel>
+            <div className="panel-heading">
+              <div>
+                <h2>Discussion & review notes</h2>
+                <p>Implementation questions and review clarifications stay attached to the task record.</p>
+              </div>
+              <span style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+                {commentsQuery.data?.length ?? 0} comment{commentsQuery.data?.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            <div style={{ padding: '0 20px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {commentsQuery.isLoading ? (
+                <PageSkeleton />
+              ) : commentsQuery.data?.length ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {commentsQuery.data.map((comment) => {
+                    const canModify = comment.authorId === user?.id || isAdmin;
+                    const isEditing = editingCommentId === comment.id;
+                    return (
+                      <div key={comment.id} style={{ padding: '12px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span className="avatar small" style={{ fontSize: '0.65rem' }}>{comment.authorName.split(' ').map((part) => part[0]).slice(0, 2).join('')}</span>
+                            <strong style={{ fontSize: '0.85rem' }}>{comment.authorName}</strong>
+                            <small style={{ color: 'var(--color-muted)' }}>{formatDate(comment.createdAt)}</small>
+                            {comment.edited && <small style={{ color: 'var(--color-muted)', fontStyle: 'italic' }}>edited</small>}
+                          </div>
+                          {canModify && !isEditing && (
+                            <div style={{ display: 'flex', gap: '4px' }}>
+                              <button
+                                type="button"
+                                title="Edit comment"
+                                onClick={() => { setEditingCommentId(comment.id); setEditingCommentBody(comment.body); }}
+                                style={{ background: 'none', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', padding: '2px' }}
+                              >
+                                <Edit3 size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                title="Delete comment"
+                                onClick={() => deleteComment.mutate(comment.id)}
+                                disabled={deleteComment.isPending}
+                                style={{ background: 'none', border: 'none', color: 'var(--color-muted)', cursor: 'pointer', padding: '2px' }}
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {isEditing ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            <textarea
+                              rows={3}
+                              value={editingCommentBody}
+                              onChange={(event) => setEditingCommentBody(event.target.value)}
+                              style={{ width: '100%', padding: '8px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit' }}
+                            />
+                            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                              <Button variant="ghost" size="sm" type="button" onClick={() => { setEditingCommentId(null); setEditingCommentBody(''); }}>Cancel</Button>
+                              <Button variant="primary" size="sm" type="button" disabled={editComment.isPending || editingCommentBody.trim().length === 0} onClick={() => editComment.mutate(comment.id)}>Save</Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p style={{ margin: 0, fontSize: '0.85rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{comment.body}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <EmptyState title="No discussion yet" body="Attach implementation context or ask for review clarification here." />
+              )}
+
+              {canComment ? (
+                <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '12px' }}>
+                  <label htmlFor="task-comment" style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-muted)', marginBottom: '6px' }}>Add a comment</label>
+                  <textarea
+                    id="task-comment"
+                    rows={3}
+                    value={commentBody}
+                    onChange={(event) => setCommentBody(event.target.value)}
+                    maxLength={4000}
+                    placeholder="Record implementation context, a review question, or the follow-up evidence..."
+                    style={{ width: '100%', padding: '10px', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '4px', color: 'inherit', marginBottom: '8px' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <small style={{ color: 'var(--color-muted)' }}>{commentBody.length}/4000</small>
+                    <Button variant="primary" size="sm" type="button" disabled={addComment.isPending || commentBody.trim().length === 0} onClick={() => addComment.mutate()}>
+                      <Send size={14} /> Post comment
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-muted)' }}>
+                  Discussion posting is restricted to the assigned engineer and administrators. Supervisors can record feedback from the member directory.
+                </p>
+              )}
+            </div>
           </Panel>
         </div>
 

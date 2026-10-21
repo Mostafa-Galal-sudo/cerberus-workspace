@@ -7,9 +7,11 @@ Private engineering collaboration software for the CERBERUS graduation project. 
 - Cloudflare Workers + Static Assets deployment with a Hono API and React client.
 - D1 schema and migrations for identity, projects, roadmaps, review workflows, communication, documentation, inventory, experiments, GitHub metadata, progress, audit, and workspace modules.
 - Seven identities with unique random temporary passwords disclosed once during initialization, plus invitation reissue and one-time activation.
-- Mandatory first-login password replacement, PBKDF2-SHA256 hashes, opaque server-side sessions, HttpOnly cookies, CSRF protection, login throttling, logout, account suspension with session revocation, last-admin protection, role assignment, and audit logs.
+- Mandatory first-login password replacement, PBKDF2-SHA256 hashes, opaque server-side sessions, HttpOnly cookies, CSRF protection, login throttling, logout, account suspension with session revocation, last-admin protection, role assignment, administrative role-editing UI, and audit logs.
+- One-time administrative password-recovery links: 32-byte tokens stored only as SHA-256 digests, one-hour expiry, single use, token retirement, and revocation of every previous session after replacement.
 - Six persisted engineering roadmaps: 30 milestones, 30 checkpoints, detailed seed tasks, checklists, and acyclic dependency chains.
 - Task search, detail, specification editor, checklist enforcement, dependency graph with server-side cycle detection, versioned evidence submission, multi-row evidence storage, review queue, approval/change request, archival, notifications, and progress events.
+- Task discussion comments with assignee/administrator posting rights, author-only editing, administrative moderation, soft deletion, and audit records for deletions.
 - Checkpoint-level submission with mandatory-task gating, duplicate-submission guards, atomic versioning, review, changes-requested resubmission, and approval timestamps.
 - Interactive four-column drag-and-drop Kanban board with optimistic updates, rollback on failure, keyboard navigation, and accessible move menus.
 - Role-specific persisted dashboards, member roadmaps, and supervisor-safe progress reads.
@@ -19,8 +21,9 @@ Private engineering collaboration software for the CERBERUS graduation project. 
 - Hardware inventory with quantity-aware checkout/return and experiment definitions with owner-checked runs and metrics.
 - Architecture decisions and shared worklogs.
 - GitHub webhook ingestion with constant-time HMAC-SHA256 verification, task-reference linking, settings, status, and local event simulation.
-- Administrative metrics, audit-log browser, workspace settings, checksummed backup export, and backup integrity verification.
-- Deterministic workspace assistant grounded in live task/wiki/blocker/decision/member context with usage telemetry.
+- Administrative metrics, audit-log browser, workspace settings loaded from persisted state, checksummed backup export, and checksum-required backup integrity verification.
+- Server-generated CSV exports for tasks, roadmap progress, hardware inventory, and blockers, with role-scoped task rows, spreadsheet formula-injection neutralization, and `report_exports` audit records.
+- Workspace assistant grounded in live task/wiki/blocker/decision/member context with usage telemetry. An optional OpenAI-compatible provider adapter is gated by the persisted `assistant.enabled` setting and an `AI_API_KEY`; any provider failure falls back to the deterministic response.
 
 ## Requirements
 
@@ -57,7 +60,7 @@ npm run test:integration
 npm run build
 ```
 
-`npm test` runs the jsdom unit/component suite. `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers`, applying every migration and exercising authentication, RBAC, task/checkpoint review, multi-evidence persistence, workspace modules, GitHub webhooks, administration, backup checksums, and assistant telemetry.
+`npm test` runs the jsdom unit/component suite (61 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (59 tests across 11 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, workspace modules, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry.
 
 ## Cloudflare deployment preparation
 
@@ -78,6 +81,7 @@ Production must set `APP_ENV` to `production` and `APP_ORIGIN` to the exact depl
 - Passwords use Web Crypto PBKDF2-SHA-256 with per-password salts and 310,000 iterations.
 - Temporary passwords are unique per account; authenticated users with `must_change_password` set cannot access workspace APIs until replacement.
 - Session tokens are random and only SHA-256 hashes are stored; the cookie is HttpOnly, SameSite Strict, and Secure in production.
+- Password-reset tokens are random, stored only as SHA-256 digests, valid for one hour, single-use, retired when reissued, and enforced with per-address throttling. Successful replacement revokes every existing session for the account.
 - State-changing authenticated requests require the per-session CSRF value.
 - Authorization is enforced in the Worker. Client-side navigation is not a security boundary.
 - A submitter cannot administratively review their own submission, including Mostafa in member mode.
@@ -86,10 +90,10 @@ Production must set `APP_ENV` to `production` and `APP_ORIGIN` to the exact depl
 
 ## Known limitations
 
-- Self-service password recovery by email is not implemented; administrators can reissue one-time activation links.
-- Realtime transport (SSE/WebSocket), file attachments, administrative role-editing UI, and team-reassignment UI are not implemented.
-- The assistant is deterministic and does not call an external LLM; `AI_API_KEY` is reserved for a future provider adapter.
-- Report export is browser printing; server-generated PDF/CSV exports and the `report_exports` table are not implemented.
+- Self-service password recovery by email is not implemented. Administrators issue one-time reset links from the Members page and deliver them out of band; the Worker never sends email.
+- Realtime transport (SSE/WebSocket), file attachments, and team-reassignment UI are not implemented.
+- The assistant calls an external OpenAI-compatible provider only when `assistant.enabled` is true and `AI_API_KEY` is configured; otherwise it uses the deterministic workspace-grounded responder. Provider responses are untrusted text and never execute tools.
+- Report exports are CSV and browser print; server-generated PDF exports are not implemented.
 - Backup restore is verification-only and does not overwrite live tables.
 - Outbound GitHub App tokens, PR creation, and repository synchronization are not implemented.
 - Remote D1/Worker deployment and end-to-end browser tests remain.

@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
-import { activationSchema, changePasswordSchema, loginSchema } from '../../shared/schemas/auth';
+import { activationSchema, changePasswordSchema, loginSchema, passwordResetSchema } from '../../shared/schemas/auth';
 import type { Env, Variables } from '../types';
 import { requireAuth } from '../middleware/auth';
 import { audit } from '../services/audit';
@@ -38,6 +38,39 @@ authRoutes.post('/login', async (context) => {
   await context.env.DB.prepare(`INSERT INTO login_attempts (key_hash, succeeded) VALUES (?, ?)` ).bind(rateKey, valid ? 1 : 0).run();
   if (!valid || !user) return context.json({ ok: false, error: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' } }, 401);
   return createSession(context, user.id, user.must_change_password === 1, 200);
+});
+
+authRoutes.post('/reset-password', async (context) => {
+  const parsed = passwordResetSchema.safeParse(await context.req.json().catch(() => null));
+  if (!parsed.success) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'The new password does not meet the security requirements', fields: parsed.error.flatten().fieldErrors } }, 422);
+  }
+
+  const address = context.req.header('CF-Connecting-IP') ?? 'local';
+  const rateKey = await sha256(`reset:${address}`);
+  const recent = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM login_attempts WHERE key_hash = ? AND succeeded = 0 AND attempted_at > unixepoch() - 900`)
+    .bind(rateKey).first<{ count: number }>();
+  if ((recent?.count ?? 0) >= 10) return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many reset attempts. Try again later.' } }, 429);
+
+  const tokenHash = await sha256(parsed.data.token);
+  const reset = await context.env.DB.prepare(`SELECT pr.id, pr.user_id, u.status
+    FROM password_reset_tokens pr JOIN users u ON u.id = pr.user_id
+    WHERE pr.token_hash = ? AND pr.used_at IS NULL AND pr.expires_at > unixepoch()`)
+    .bind(tokenHash).first<{ id: string; user_id: string; status: string }>();
+  const valid = Boolean(reset && reset.status === 'active');
+  await context.env.DB.prepare(`INSERT INTO login_attempts (key_hash, succeeded) VALUES (?, ?)`).bind(rateKey, valid ? 1 : 0).run();
+  if (!valid || !reset) return context.json({ ok: false, error: { code: 'RESET_TOKEN_INVALID', message: 'This reset link is invalid, expired, or already used' } }, 400);
+
+  const passwordHash = await hashPassword(parsed.data.password);
+  await context.env.DB.batch([
+    context.env.DB.prepare(`UPDATE users SET password_hash = ?, must_change_password = 0, status = 'active', updated_at = unixepoch() WHERE id = ?`).bind(passwordHash, reset.user_id),
+    context.env.DB.prepare(`UPDATE password_reset_tokens SET used_at = unixepoch() WHERE id = ?`).bind(reset.id),
+    context.env.DB.prepare(`UPDATE password_reset_tokens SET used_at = unixepoch() WHERE user_id = ? AND used_at IS NULL`).bind(reset.user_id),
+    context.env.DB.prepare(`UPDATE sessions SET revoked_at = unixepoch() WHERE user_id = ? AND revoked_at IS NULL`).bind(reset.user_id),
+    audit(context.env, reset.user_id, 'account.password_reset_completed', 'user', reset.user_id),
+  ]);
+
+  return context.json({ ok: true, data: { reset: true } });
 });
 
 authRoutes.use('/me', requireAuth);

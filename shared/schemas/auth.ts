@@ -14,6 +14,15 @@ export const activationSchema = z.object({
     .regex(/[^A-Za-z0-9]/, 'Include a symbol'),
 });
 
+export const passwordResetSchema = z.object({
+  token: z.string().min(32).max(256),
+  password: z.string().min(12).max(128)
+    .regex(/[a-z]/, 'Include a lowercase letter')
+    .regex(/[A-Z]/, 'Include an uppercase letter')
+    .regex(/[0-9]/, 'Include a number')
+    .regex(/[^A-Za-z0-9]/, 'Include a symbol'),
+});
+
 export const changePasswordSchema = z.object({
   currentPassword: z.string().min(12).max(128),
   newPassword: z.string().min(12).max(128)

@@ -85,6 +85,36 @@ userRoutes.post('/:id/reissue-invitation', requirePermission('workspace.admin'),
   });
 });
 
+userRoutes.post('/:id/reset-password', requirePermission('workspace.admin'), async (context) => {
+  const userId = context.req.param('id');
+  const user = await context.env.DB.prepare(`SELECT id, email, status FROM users WHERE id=? AND archived_at IS NULL`).bind(userId).first<{ id: string; email: string; status: string }>();
+  if (!user) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  if (user.status !== 'active') {
+    return context.json({ ok: false, error: { code: 'ACCOUNT_NOT_ACTIVE', message: 'Reactivate the account before issuing a password reset' } }, 409);
+  }
+
+  const token = randomToken(32);
+  const tokenHash = await sha256(token);
+  const resetId = crypto.randomUUID();
+  const expiresAt = Math.floor(Date.now() / 1000) + 3600; // 1 hour
+
+  await context.env.DB.batch([
+    context.env.DB.prepare(`UPDATE password_reset_tokens SET used_at=unixepoch() WHERE user_id=? AND used_at IS NULL`).bind(userId),
+    context.env.DB.prepare(`INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, created_by) VALUES (?, ?, ?, ?, ?)`)
+      .bind(resetId, userId, tokenHash, expiresAt, context.get('user').id),
+    audit(context.env, context.get('user').id, 'user.password_reset_issued', 'user', userId, { resetId }),
+  ]);
+
+  return context.json({
+    ok: true,
+    data: {
+      token,
+      resetUrl: `/reset-password?token=${encodeURIComponent(token)}`,
+      expiresAt,
+    },
+  });
+});
+
 userRoutes.patch('/:id/profile', async (context) => {
   const targetId = context.req.param('id');
   const current = context.get('user');

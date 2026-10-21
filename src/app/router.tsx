@@ -6,6 +6,7 @@ import { PageSkeleton } from '../components/ui';
 import { ActivationPage } from '../features/auth/activation-page';
 import { LoginPage } from '../features/auth/login-page';
 import { ChangePasswordPage } from '../features/auth/change-password-page';
+import { ResetPasswordPage } from '../features/auth/reset-password-page';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
 import { ReviewQueuePage } from '../features/tasks/review-queue-page';
 import { TaskDetailPage } from '../features/tasks/task-detail-page';
@@ -36,6 +37,7 @@ function Protected() {
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   { path: '/activate', element: <ActivationPage /> },
+  { path: '/reset-password', element: <ResetPasswordPage /> },
   {
     path: '/',
     element: <Protected />,

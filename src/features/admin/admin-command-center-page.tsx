@@ -46,9 +46,11 @@ export function AdminCommandCenterPage() {
   const [auditActionFilter, setAuditActionFilter] = useState('');
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  // Settings State
-  const [workspaceName, setWorkspaceName] = useState('CERBERUS WORKSPACE');
-  const [assistantEnabled, setAssistantEnabled] = useState(true);
+  // Settings are loaded by the query and applied by the form component below.
+  const settingsQuery = useQuery({
+    queryKey: ['admin-settings'],
+    queryFn: () => api<Record<string, unknown>>('/admin/settings'),
+  });
 
   const metricsQuery = useQuery({
     queryKey: ['admin-metrics'],
@@ -66,12 +68,12 @@ export function AdminCommandCenterPage() {
 
 
   const saveSettings = useMutation({
-    mutationFn: () =>
+    mutationFn: (values: { workspaceName: string; assistantEnabled: boolean }) =>
       api('/admin/settings', {
         method: 'PATCH',
         body: JSON.stringify({
-          'workspace.name': workspaceName,
-          'assistant.enabled': assistantEnabled,
+          'workspace.name': values.workspaceName,
+          'assistant.enabled': values.assistantEnabled,
         }),
       }),
     onSuccess: () => {
@@ -84,8 +86,15 @@ export function AdminCommandCenterPage() {
   const exportBackup = useMutation({
     mutationFn: () => api<{ backupId: string; checksum: string; totalRecords: number; exportedAt: number; payload: unknown }>('/admin/backup/export'),
     onSuccess: (data) => {
-      // Trigger browser JSON download
-      const jsonStr = JSON.stringify(data.payload, null, 2);
+      // Download a wrapper that includes the checksum required for later verification.
+      const archive = {
+        version: '1.0.0',
+        exportedAt: data.exportedAt,
+        checksum: data.checksum,
+        totalRecords: data.totalRecords,
+        payload: data.payload,
+      };
+      const jsonStr = JSON.stringify(archive, null, 2);
       const blob = new Blob([jsonStr], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -107,15 +116,23 @@ export function AdminCommandCenterPage() {
     reader.onload = async (event) => {
       try {
         const content = event.target?.result as string;
-        const payload = JSON.parse(content) as { version: string; tables: Record<string, unknown[]> };
-        const res = await api<{ restored: boolean; checksum: string; totalRecords: number }>('/admin/backup/restore', {
+        const archive = JSON.parse(content) as {
+          payload?: { version: string; tables: Record<string, unknown[]> };
+          checksum?: string;
+        };
+        const payload = archive.payload ?? (archive as unknown as { version: string; tables: Record<string, unknown[]> });
+        if (!archive.checksum) {
+          setFeedback('This file does not contain a checksum. Export a fresh archive and select the full wrapper file.');
+          return;
+        }
+        const res = await api<{ verified: boolean; restored: boolean; checksum: string; totalRecords: number }>('/admin/backup/restore', {
           method: 'POST',
-          body: JSON.stringify({ payload }),
+          body: JSON.stringify({ payload, checksum: archive.checksum }),
         });
-        setFeedback(`Backup verified and restored: ${res.totalRecords} records. Checksum: ${res.checksum}`);
+        setFeedback(`Backup integrity verified: ${res.totalRecords} records. Checksum: ${res.checksum}. Live tables were not modified (verification-only).`);
         void queryClient.invalidateQueries({ queryKey: ['admin-metrics'] });
       } catch (err) {
-        setFeedback(err instanceof ApiError ? err.message : 'Restore verification failed');
+        setFeedback(err instanceof ApiError ? err.message : 'Backup verification failed');
       }
     };
     reader.readAsText(file);
@@ -336,7 +353,7 @@ export function AdminCommandCenterPage() {
         </div>
       )}
 
-      {/* Tab 3: Backup & Recovery */}
+      {/* Tab 3: Backup & Integrity Verification */}
       {activeTab === 'backup' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
@@ -360,10 +377,10 @@ export function AdminCommandCenterPage() {
             <Panel style={{ padding: '24px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
                 <Upload size={22} style={{ color: 'var(--color-matrix-emerald)' }} />
-                <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Restore & Verify Backup</h3>
+                <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Verify Backup Integrity</h3>
               </div>
               <p style={{ fontSize: '0.85rem', color: 'var(--color-muted)', lineHeight: 1.6, marginBottom: '20px' }}>
-                Upload an exported JSON backup file. The worker will verify the payload structure, re-compute the SHA-256 checksum, and log the restoration event into the immutable audit record.
+                Upload an exported archive wrapper. The worker verifies the payload structure, re-computes the SHA-256 checksum, and records the verification event. This is an integrity check only; live tables are never overwritten.
               </p>
               <label style={{ display: 'inline-block' }}>
                 <span className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
@@ -383,48 +400,74 @@ export function AdminCommandCenterPage() {
 
       {/* Tab 4: System Configuration */}
       {activeTab === 'settings' && (
-        <Panel style={{ maxWidth: '640px', padding: '24px' }}>
-          <h2 style={{ margin: '0 0 16px', fontSize: '1.2rem' }}>Workspace Parameters</h2>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              saveSettings.mutate();
-            }}
-            style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
-          >
-            <label>
-              <small>Workspace Brand Name</small>
-              <input
-                type="text"
-                value={workspaceName}
-                onChange={(e) => setWorkspaceName(e.target.value)}
-                style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-              />
-            </label>
-
-            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-              <input
-                type="checkbox"
-                checked={assistantEnabled}
-                onChange={(e) => setAssistantEnabled(e.target.checked)}
-                style={{ width: '16px', height: '16px' }}
-              />
-              <div>
-                <strong>Enable AI Sentinel Assistant</strong>
-                <small style={{ display: 'block', color: 'var(--color-muted)' }}>
-                  Provides automated context retrieval and grounding across tasks, wiki, and blockers.
-                </small>
-              </div>
-            </label>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
-              <Button type="submit" variant="primary" disabled={saveSettings.isPending}>
-                {saveSettings.isPending ? 'Saving...' : 'Save Configuration'}
-              </Button>
-            </div>
-          </form>
-        </Panel>
+        settingsQuery.isLoading ? (
+          <PageSkeleton />
+        ) : settingsQuery.data ? (
+          <WorkspaceSettingsForm
+            key={JSON.stringify([settingsQuery.data['workspace.name'], settingsQuery.data['assistant.enabled']])}
+            initialWorkspaceName={typeof settingsQuery.data['workspace.name'] === 'string' ? settingsQuery.data['workspace.name'] : 'CERBERUS WORKSPACE'}
+            initialAssistantEnabled={settingsQuery.data['assistant.enabled'] === true}
+            isPending={saveSettings.isPending}
+            onSave={(values) => saveSettings.mutate(values)}
+          />
+        ) : (
+          <EmptyState title="Settings unavailable" body="The workspace configuration could not be loaded." />
+        )
       )}
     </div>
+  );
+}
+
+function WorkspaceSettingsForm({ initialWorkspaceName, initialAssistantEnabled, isPending, onSave }: {
+  initialWorkspaceName: string;
+  initialAssistantEnabled: boolean;
+  isPending: boolean;
+  onSave: (values: { workspaceName: string; assistantEnabled: boolean }) => void;
+}) {
+  const [workspaceName, setWorkspaceName] = useState(initialWorkspaceName);
+  const [assistantEnabled, setAssistantEnabled] = useState(initialAssistantEnabled);
+
+  return (
+    <Panel style={{ maxWidth: '640px', padding: '24px' }}>
+      <h2 style={{ margin: '0 0 16px', fontSize: '1.2rem' }}>Workspace Parameters</h2>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSave({ workspaceName, assistantEnabled });
+        }}
+        style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
+      >
+        <label>
+          <small>Workspace Brand Name</small>
+          <input
+            type="text"
+            value={workspaceName}
+            onChange={(e) => setWorkspaceName(e.target.value)}
+            style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
+          />
+        </label>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={assistantEnabled}
+            onChange={(e) => setAssistantEnabled(e.target.checked)}
+            style={{ width: '16px', height: '16px' }}
+          />
+          <div>
+            <strong>Enable provider-backed AI Sentinel Assistant</strong>
+            <small style={{ display: 'block', color: 'var(--color-muted)' }}>
+              Requires a configured AI_API_KEY. When disabled or unavailable, the deterministic workspace-grounded assistant is used.
+            </small>
+          </div>
+        </label>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+          <Button type="submit" variant="primary" disabled={isPending}>
+            {isPending ? 'Saving...' : 'Save Configuration'}
+          </Button>
+        </div>
+      </form>
+    </Panel>
   );
 }

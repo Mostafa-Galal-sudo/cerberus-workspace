@@ -244,7 +244,7 @@ adminRoutes.get('/backup/export', async (context) => {
   });
 });
 
-// Full Workspace Database Restore Verification
+// Backup integrity verification (does not overwrite live tables)
 adminRoutes.post('/backup/restore', async (context) => {
   interface RestoreBody {
     payload?: { version: string; tables: Record<string, unknown[]> };
@@ -254,10 +254,13 @@ adminRoutes.post('/backup/restore', async (context) => {
   if (!body.payload || !body.payload.tables) {
     return context.json({ ok: false, error: { code: 'INVALID_BACKUP', message: 'Invalid backup structure' } }, 422);
   }
+  if (!body.checksum) {
+    return context.json({ ok: false, error: { code: 'CHECKSUM_REQUIRED', message: 'The backup checksum is required for integrity verification' } }, 400);
+  }
 
   const jsonString = JSON.stringify(body.payload);
   const calculatedChecksum = await sha256(jsonString);
-  if (body.checksum && body.checksum !== calculatedChecksum) {
+  if (body.checksum !== calculatedChecksum) {
     return context.json({ ok: false, error: { code: 'CHECKSUM_MISMATCH', message: 'Backup payload integrity check failed' } }, 400);
   }
 
@@ -267,13 +270,14 @@ adminRoutes.post('/backup/restore', async (context) => {
   await context.env.DB.batch([
     context.env.DB.prepare(`INSERT INTO backup_runs (id, actor_id, operation, record_count, checksum)
       VALUES (?, ?, 'restore', ?, ?)`).bind(backupId, context.get('user').id, totalRecords, calculatedChecksum),
-    audit(context.env, context.get('user').id, 'backup.restored', 'backup_run', backupId, { totalRecords, checksum: calculatedChecksum }),
+    audit(context.env, context.get('user').id, 'backup.integrity_verified', 'backup_run', backupId, { totalRecords, checksum: calculatedChecksum }),
   ]);
 
   return context.json({
     ok: true,
     data: {
-      restored: true,
+      verified: true,
+      restored: false,
       backupId,
       totalRecords,
       checksum: calculatedChecksum,

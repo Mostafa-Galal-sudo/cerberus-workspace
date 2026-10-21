@@ -7,3 +7,6 @@ CLOUDINARY_API_SECRET=
 GITHUB_WEBHOOK_SECRET=
 GITHUB_TOKEN=
 AI_API_KEY=
+# Optional OpenAI-compatible provider. The assistant must also be enabled in Admin Settings.
+AI_BASE_URL=https://api.openai.com/v1
+AI_MODEL=gpt-4o-mini

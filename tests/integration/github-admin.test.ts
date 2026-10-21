@@ -125,7 +125,9 @@ describe('GitHub integration, administration and assistant telemetry', () => {
       body: JSON.stringify({ payload: data.payload, checksum: data.checksum }),
     });
     expect(restore.status).toBe(200);
-    expect((await readData<{ restored: boolean }>(restore)).restored).toBe(true);
+    const verification = await readData<{ verified: boolean; restored: boolean }>(restore);
+    expect(verification.verified).toBe(true);
+    expect(verification.restored).toBe(false);
 
     const tampered = await call(admin, '/api/v1/admin/backup/restore', {
       method: 'POST',
@@ -133,6 +135,13 @@ describe('GitHub integration, administration and assistant telemetry', () => {
     });
     expect(tampered.status).toBe(400);
     expect((await readBody(tampered)).error?.code).toBe('CHECKSUM_MISMATCH');
+
+    const missingChecksum = await call(admin, '/api/v1/admin/backup/restore', {
+      method: 'POST',
+      body: JSON.stringify({ payload: data.payload }),
+    });
+    expect(missingChecksum.status).toBe(400);
+    expect((await readBody(missingChecksum)).error?.code).toBe('CHECKSUM_REQUIRED');
 
     const operations = await env.DB.prepare(`SELECT operation, COUNT(*) AS count FROM backup_runs GROUP BY operation`).all<{ operation: string; count: number }>();
     const byOperation = new Map(operations.results.map((row) => [row.operation, row.count]));

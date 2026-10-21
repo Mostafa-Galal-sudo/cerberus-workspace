@@ -3,8 +3,10 @@ import {
   Copy,
   Edit3,
   ExternalLink,
+  KeyRound,
   RefreshCw,
   Search,
+  ShieldCheck,
   UserCheck,
   UserX,
 } from 'lucide-react';
@@ -50,6 +52,13 @@ interface RoadmapData {
   tasks: Array<{ id: string; title: string; priority: string; status: string; approvedAt?: number; checkpointId?: string }>;
 }
 
+const ROLE_OPTIONS = [
+  { value: 'team_member', label: 'Team member', description: 'Work on assigned tasks and submit evidence.' },
+  { value: 'technical_lead', label: 'Technical lead', description: 'Technical leadership designation.' },
+  { value: 'project_supervisor', label: 'Project supervisor', description: 'Read-only academic supervision and feedback.' },
+  { value: 'super_admin', label: 'Super admin', description: 'Full workspace administration and independent review.' },
+];
+
 export function MembersPage() {
   const { user } = useAuth();
   const { mode } = useOutletContext<{ mode: string }>();
@@ -60,10 +69,13 @@ export function MembersPage() {
   const [search, setSearch] = useState('');
   const [activeTab, setActiveTab] = useState<'profile' | 'roadmap' | 'feedback'>('profile');
   const [editingProfile, setEditingProfile] = useState(false);
+  const [editingRoles, setEditingRoles] = useState(false);
+  const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [editName, setEditName] = useState('');
   const [editSpecialization, setEditSpecialization] = useState('');
   const [editBio, setEditBio] = useState('');
   const [reissuedUrl, setReissuedUrl] = useState<string | null>(null);
+  const [resetUrl, setResetUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [feedbackBody, setFeedbackBody] = useState('');
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -104,10 +116,21 @@ export function MembersPage() {
     mutationFn: (id: string) => api<{ activationUrl: string }>(`/users/${id}/reissue-invitation`, { method: 'POST' }),
     onSuccess: (res) => {
       setReissuedUrl(`${window.location.origin}${res.activationUrl}`);
+      setResetUrl(null);
       setActionMessage('New invitation link generated.');
       void queryClient.invalidateQueries({ queryKey: ['members'] });
     },
     onError: (err) => setActionMessage(err instanceof ApiError ? err.message : 'Invitation reissue failed'),
+  });
+
+  const issuePasswordReset = useMutation({
+    mutationFn: (id: string) => api<{ resetUrl: string; expiresAt: number }>(`/users/${id}/reset-password`, { method: 'POST' }),
+    onSuccess: (res) => {
+      setResetUrl(`${window.location.origin}${res.resetUrl}`);
+      setReissuedUrl(null);
+      setActionMessage('One-time password reset link generated.');
+    },
+    onError: (err) => setActionMessage(err instanceof ApiError ? err.message : 'Password reset link generation failed'),
   });
 
   const updateProfile = useMutation({
@@ -122,6 +145,20 @@ export function MembersPage() {
       void queryClient.invalidateQueries({ queryKey: ['members'] });
     },
     onError: (err) => setActionMessage(err instanceof ApiError ? err.message : 'Profile update failed'),
+  });
+
+  const updateRoles = useMutation({
+    mutationFn: (id: string) =>
+      api(`/users/${id}/roles`, {
+        method: 'PATCH',
+        body: JSON.stringify({ roles: selectedRoles }),
+      }),
+    onSuccess: () => {
+      setEditingRoles(false);
+      setActionMessage('Access roles updated. Permission changes apply immediately.');
+      void queryClient.invalidateQueries({ queryKey: ['members'] });
+    },
+    onError: (err) => setActionMessage(err instanceof ApiError ? err.message : 'Role update failed'),
   });
 
   const submitFeedback = useMutation({
@@ -150,8 +187,10 @@ export function MembersPage() {
   const handleSelectMember = (id: string) => {
     setSearchParams({ selected: id });
     setReissuedUrl(null);
+    setResetUrl(null);
     setActionMessage(null);
     setEditingProfile(false);
+    setEditingRoles(false);
   };
 
   const handleStartEdit = () => {
@@ -162,9 +201,26 @@ export function MembersPage() {
     setEditingProfile(true);
   };
 
+  const handleStartRoleEdit = () => {
+    if (!selectedMember) return;
+    setSelectedRoles(selectedMember.roles.split(',').filter(Boolean));
+    setEditingRoles(true);
+  };
+
+  const toggleRole = (role: string) => {
+    setSelectedRoles((current) => current.includes(role) ? current.filter((value) => value !== role) : [...current, role]);
+  };
+
   const copyInvite = () => {
     if (!reissuedUrl) return;
     navigator.clipboard.writeText(reissuedUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
+  const copyReset = () => {
+    if (!resetUrl) return;
+    navigator.clipboard.writeText(resetUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   };
@@ -288,6 +344,12 @@ export function MembersPage() {
                   </Button>
                 )}
 
+                {isAdmin && !editingRoles && (
+                  <Button variant="secondary" size="sm" onClick={handleStartRoleEdit}>
+                    <ShieldCheck size={14} /> Roles
+                  </Button>
+                )}
+
                 {isAdmin && selectedMember.id !== user?.id && (
                   <>
                     <Button
@@ -312,6 +374,14 @@ export function MembersPage() {
                     >
                       <RefreshCw size={14} /> Reissue activation
                     </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => issuePasswordReset.mutate(selectedMember.id)}
+                      disabled={issuePasswordReset.isPending}
+                    >
+                      <KeyRound size={14} /> Reset password
+                    </Button>
                   </>
                 )}
               </div>
@@ -334,6 +404,27 @@ export function MembersPage() {
                 </div>
                 <small style={{ color: 'var(--color-muted)', display: 'block', marginTop: '4px' }}>
                   Valid for 7 days. Once activated, the member sets their permanent password.
+                </small>
+              </div>
+            )}
+
+            {resetUrl && (
+              <div style={{ background: 'var(--color-surface-hover)', border: '1px solid var(--color-cyan-sentinel)', padding: '12px', borderRadius: '4px', marginBottom: '16px' }}>
+                <strong style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-cyan-sentinel)', marginBottom: '4px' }}>
+                  One-Time Password Reset URL
+                </strong>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    readOnly
+                    value={resetUrl}
+                    style={{ flex: 1, padding: '6px 8px', fontSize: '0.8rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+                  />
+                  <Button variant="secondary" size="sm" onClick={copyReset}>
+                    <Copy size={14} /> {copied ? 'Copied' : 'Copy'}
+                  </Button>
+                </div>
+                <small style={{ color: 'var(--color-muted)', display: 'block', marginTop: '4px' }}>
+                  Valid for 1 hour and single-use. Delivering this link revokes every active session after the password is replaced.
                 </small>
               </div>
             )}
@@ -379,6 +470,48 @@ export function MembersPage() {
                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                   <Button type="button" variant="ghost" onClick={() => setEditingProfile(false)}>Cancel</Button>
                   <Button type="submit" variant="primary" disabled={updateProfile.isPending}>Save changes</Button>
+                </div>
+              </form>
+            )}
+
+            {/* Role editor */}
+            {editingRoles && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  updateRoles.mutate(selectedMember.id);
+                }}
+                style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '20px', padding: '16px', background: 'var(--color-surface-subtle)', borderRadius: '6px', border: '1px solid var(--color-border)' }}
+              >
+                <div>
+                  <h3 style={{ margin: 0 }}>Access roles</h3>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-muted)' }}>
+                    Role changes apply immediately, including to existing sessions. The final super-admin cannot be removed.
+                  </p>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '8px' }}>
+                  {ROLE_OPTIONS.map((role) => (
+                    <label
+                      key={role.value}
+                      style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px', background: 'var(--color-surface)', border: `1px solid ${selectedRoles.includes(role.value) ? 'var(--color-border-accent)' : 'var(--color-border)'}`, borderRadius: '4px', cursor: 'pointer' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedRoles.includes(role.value)}
+                        onChange={() => toggleRole(role.value)}
+                        style={{ marginTop: '3px' }}
+                      />
+                      <span>
+                        <strong style={{ display: 'block', fontSize: '0.85rem' }}>{role.label}</strong>
+                        <small style={{ color: 'var(--color-muted)', fontSize: '0.75rem' }}>{role.description}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                {selectedRoles.length === 0 && <div className="form-error">At least one role is required.</div>}
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                  <Button type="button" variant="ghost" onClick={() => setEditingRoles(false)}>Cancel</Button>
+                  <Button type="submit" variant="primary" disabled={updateRoles.isPending || selectedRoles.length === 0}>Save roles</Button>
                 </div>
               </form>
             )}
