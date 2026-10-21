@@ -10,6 +10,13 @@ describe('authentication cryptography', () => {
     await expect(verifyPassword('wrong password', hash)).resolves.toBe(false);
   });
 
+  it('uses the Cloudflare-safe PBKDF2 work factor by default', async () => {
+    const password = 'Cerberus-Platform-Limit!58';
+    const hash = await hashPassword(password);
+    expect(hash.startsWith('pbkdf2-sha256$100000$')).toBe(true);
+    await expect(verifyPassword(password, hash)).resolves.toBe(true);
+  });
+
   it('generates non-repeating session tokens and stable hashes', async () => {
     const first = randomToken(); const second = randomToken();
     expect(first).not.toBe(second);

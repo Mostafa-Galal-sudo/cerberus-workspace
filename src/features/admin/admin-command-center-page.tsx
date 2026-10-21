@@ -289,7 +289,7 @@ export function AdminCommandCenterPage() {
                     <ShieldCheck size={20} style={{ color: 'var(--color-matrix-emerald)' }} />
                     <div>
                       <strong>PBKDF2 Cryptographic Hashes: ACTIVE</strong>
-                      <small style={{ display: 'block', color: 'var(--color-muted)' }}>310,000 PBKDF2 iterations with unique 16-byte cryptographically secure salts</small>
+                      <small style={{ display: 'block', color: 'var(--color-muted)' }}>100,000 PBKDF2 iterations (Cloudflare platform maximum) with unique 16-byte cryptographically secure salts</small>
                     </div>
                   </div>
                 </div>

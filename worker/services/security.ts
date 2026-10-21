@@ -9,7 +9,11 @@ export async function sha256(value: string): Promise<string> {
   return base64url(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(value))));
 }
 
-export async function hashPassword(password: string, iterations = 310_000): Promise<string> {
+// Cloudflare Workers rejects PBKDF2 iteration counts above 100,000. The count is
+// stored inside each hash, so it can be raised if the platform limit changes.
+export const PASSWORD_ITERATIONS = 100_000;
+
+export async function hashPassword(password: string, iterations = PASSWORD_ITERATIONS): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, material, 256);

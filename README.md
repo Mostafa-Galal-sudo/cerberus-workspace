@@ -60,25 +60,25 @@ npm run test:integration
 npm run build
 ```
 
-`npm test` runs the jsdom unit/component suite (67 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (59 tests across 11 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, workspace modules, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry.
+`npm test` runs the jsdom unit/component suite (68 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (59 tests across 11 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, workspace modules, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry.
 
-## Cloudflare deployment preparation
+## Cloudflare deployment
 
-Remote deployment has **not** been provisioned. `wrangler.jsonc` still contains `REPLACE_WITH_D1_DATABASE_ID`. To deploy:
+Production is deployed at `https://cerberus-workspace.mosthistory139.workers.dev` using Worker `cerberus-workspace`, D1 database `cerberus-workspace` (region WEUR), and the database ID committed in `wrangler.jsonc`. The database ID is not a secret. To provision a fresh environment:
 
 1. Authenticate Wrangler: `npx wrangler login` in an interactive terminal, or provide `CLOUDFLARE_API_TOKEN` with D1 and Workers permissions in non-interactive environments. Verify with `npx wrangler whoami`.
 2. Create D1: `npx wrangler d1 create cerberus-workspace`
-3. Replace `REPLACE_WITH_D1_DATABASE_ID` in `wrangler.jsonc` with the returned ID.
-4. Set bootstrap secret: `npx wrangler secret put SETUP_TOKEN`
-5. Apply migrations: `npm run db:migrate:remote`
-6. Deploy: `npm run deploy`
-7. Call `/api/v1/setup/initialize` once using the setup secret, save the one-time temporary credentials, then rotate or delete the setup secret.
+3. Replace the `database_id` in `wrangler.jsonc` with the returned ID and set `APP_ORIGIN` to the exact HTTPS origin that will serve the Worker.
+4. Apply migrations: `npm run db:migrate:remote`
+5. Deploy: `npm run deploy`
+6. Set the bootstrap secret now that the Worker exists: `npx wrangler secret put SETUP_TOKEN`
+7. Call `/api/v1/setup/initialize` once using the setup secret, save the one-time temporary credentials, then delete the setup secret.
 
-Production must set `APP_ENV` to `production` and `APP_ORIGIN` to the exact deployed HTTPS origin. External integrations are disabled until their credentials are configured. Never commit `.dev.vars` or provider credentials; the build script rejects bundles that contain values from `.dev.vars`.
+`APP_ENV` is `production` and `APP_ORIGIN` must always match the exact deployed HTTPS origin, including when a custom domain is added. External integrations are disabled until their credentials are configured. Never commit `.dev.vars` or provider credentials; the build script rejects bundles that contain values from `.dev.vars`.
 
 ## Security notes
 
-- Passwords use Web Crypto PBKDF2-SHA-256 with per-password salts and 310,000 iterations.
+- Passwords use Web Crypto PBKDF2-SHA-256 with per-password salts and 100,000 iterations, the maximum supported by Cloudflare Workers Web Crypto. This is below the current OWASP PBKDF2-SHA-256 recommendation; it is a platform constraint. Rate limiting reduces online guessing, and the iteration count is stored in each hash so the work factor can be raised later without invalidating existing passwords.
 - Temporary passwords are unique per account; authenticated users with `must_change_password` set cannot access workspace APIs until replacement.
 - Session tokens are random and only SHA-256 hashes are stored; the cookie is HttpOnly, SameSite Strict, and Secure in production.
 - Password-reset tokens are random, stored only as SHA-256 digests, valid for one hour, single-use, retired when reissued, and enforced with per-address throttling. Successful replacement revokes every existing session for the account.

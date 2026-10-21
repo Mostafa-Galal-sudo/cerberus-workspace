@@ -12,11 +12,12 @@
   "d1_databases": [{
     "binding": "DB",
     "database_name": "cerberus-workspace",
-    "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+    "database_id": "6aac7050-c5a2-49c8-90f2-840920ea58bf",
     "migrations_dir": "db/migrations"
   }],
   "vars": {
-    "APP_ENV": "production"
+    "APP_ENV": "production",
+    "APP_ORIGIN": "https://cerberus-workspace.mosthistory139.workers.dev"
   },
   "observability": { "enabled": true }
 }
