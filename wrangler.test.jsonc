@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cerberus-workspace-test",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-08-22",
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "cerberus-workspace-test",
+    "database_id": "00000000-0000-0000-0000-000000000000",
+    "migrations_dir": "db/migrations"
+  }],
+  "vars": {
+    "APP_ENV": "test",
+    "SETUP_TOKEN": "integration-setup-token"
+  }
+}

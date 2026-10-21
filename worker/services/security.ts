@@ -29,6 +29,27 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return constantTimeEqual(actual, fromBase64url(expectedText));
 }
 
+export async function computeHmacSha256(keyText: string, messageText: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', encoder.encode(keyText), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signature = await crypto.subtle.sign('HMAC', key, encoder.encode(messageText));
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+export function timingSafeCompare(left: string, right: string): boolean {
+  if (left.length !== right.length) return false;
+  let mismatch = 0;
+  for (let index = 0; index < left.length; index += 1) mismatch |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  return mismatch === 0;
+}
+
+export async function verifyGithubSignature(secret: string, payload: string, signatureHeader: string | null): Promise<boolean> {
+  if (!signatureHeader || !signatureHeader.startsWith('sha256=')) return false;
+  const provided = signatureHeader.slice(7);
+  if (provided.length !== 64) return false;
+  const expected = await computeHmacSha256(secret, payload);
+  return timingSafeCompare(expected, provided);
+}
+
 function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
   if (left.length !== right.length) return false;
   let mismatch = 0;

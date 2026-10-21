@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
+import { verifyGithubSignature } from '../services/security';
 import type { Env, Variables } from '../types';
 
 export const githubRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -22,9 +23,7 @@ githubRoutes.post('/webhook', async (context) => {
     if (!signature || !signature.startsWith('sha256=')) {
       return context.json({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Missing or malformed X-Hub-Signature-256' } }, 401);
     }
-    const expected = await computeHmacSha256(config.webhookSecret, rawBody);
-    const provided = signature.slice(7);
-    if (!timingSafeCompare(expected, provided)) {
+    if (!await verifyGithubSignature(config.webhookSecret, rawBody, signature)) {
       return context.json({ ok: false, error: { code: 'SIGNATURE_MISMATCH', message: 'Invalid HMAC signature' } }, 401);
     }
   }
@@ -168,17 +167,3 @@ githubRoutes.post('/simulate-event', requirePermission('workspace.admin'), async
   }, 201);
 });
 
-async function computeHmacSha256(keyText: string, messageText: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', encoder.encode(keyText), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const signatureBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(messageText));
-  const hashArray = Array.from(new Uint8Array(signatureBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function timingSafeCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return mismatch === 0;
-}

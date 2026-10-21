@@ -66,6 +66,10 @@ taskRoutes.post('/checkpoints/:id/submissions', async (context) => {
   const checkpoint = await context.env.DB.prepare(`SELECT c.id, c.owner_id, c.status FROM checkpoints c WHERE c.id=? AND c.archived_at IS NULL`).bind(checkpointId).first<{ id: string; owner_id: string; status: string }>();
   if (!checkpoint) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Checkpoint not found' } }, 404);
 
+  if (checkpoint.status === 'ready_for_review' || checkpoint.status === 'approved') {
+    return context.json({ ok: false, error: { code: 'ALREADY_SUBMITTED', message: 'This checkpoint has already been submitted for review' } }, 409);
+  }
+
   const user = context.get('user');
   if (!user.permissions.includes('task.work') && !user.permissions.includes('task.manage')) {
     return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'You do not have permission to submit checkpoints' } }, 403);
@@ -74,16 +78,22 @@ taskRoutes.post('/checkpoints/:id/submissions', async (context) => {
     return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the checkpoint owner or an administrator can submit for checkpoint review' } }, 403);
   }
 
-  const pendingTasks = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM checkpoint_tasks ct JOIN tasks t ON t.id=ct.task_id WHERE ct.checkpoint_id=? AND t.status <> 'approved' AND t.archived_at IS NULL`).bind(checkpointId).first<{ count: number }>();
+  const [pendingTasks, taskCount] = await Promise.all([
+    context.env.DB.prepare(`SELECT COUNT(*) AS count FROM checkpoint_tasks ct JOIN tasks t ON t.id=ct.task_id WHERE ct.checkpoint_id=? AND t.status <> 'approved' AND t.archived_at IS NULL`).bind(checkpointId).first<{ count: number }>(),
+    context.env.DB.prepare(`SELECT COUNT(*) AS count FROM checkpoint_tasks ct JOIN tasks t ON t.id=ct.task_id WHERE ct.checkpoint_id=? AND t.archived_at IS NULL`).bind(checkpointId).first<{ count: number }>(),
+  ]);
+  if ((taskCount?.count ?? 0) === 0) {
+    return context.json({ ok: false, error: { code: 'TASKS_INCOMPLETE', message: 'This checkpoint has no mandatory tasks to submit' } }, 409);
+  }
   if ((pendingTasks?.count ?? 0) > 0) {
     return context.json({ ok: false, error: { code: 'TASKS_INCOMPLETE', message: 'All mandatory checkpoint tasks must be approved first' } }, 409);
   }
 
-  const latest = await context.env.DB.prepare(`SELECT COALESCE(MAX(version),0) AS version FROM submissions WHERE checkpoint_id=?`).bind(checkpointId).first<{ version: number }>();
   const submissionId = crypto.randomUUID();
 
   const statements = [
-    context.env.DB.prepare(`INSERT INTO submissions (id, checkpoint_id, submitted_by, summary, version) VALUES (?, ?, ?, ?, ?)`).bind(submissionId, checkpointId, user.id, parsed.data.summary, (latest?.version ?? 0) + 1),
+    context.env.DB.prepare(`INSERT INTO submissions (id, checkpoint_id, submitted_by, summary, version)
+      SELECT ?, ?, ?, ?, COALESCE(MAX(version),0)+1 FROM submissions WHERE checkpoint_id=?`).bind(submissionId, checkpointId, user.id, parsed.data.summary, checkpointId),
     context.env.DB.prepare(`UPDATE checkpoints SET status='ready_for_review', updated_at=unixepoch() WHERE id=?`).bind(checkpointId),
     audit(context.env, user.id, 'checkpoint.submitted', 'submission', submissionId, { checkpointId }),
   ];
