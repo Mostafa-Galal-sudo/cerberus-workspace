@@ -66,7 +66,7 @@ npm run build
 
 Remote deployment has **not** been provisioned. `wrangler.jsonc` still contains `REPLACE_WITH_D1_DATABASE_ID`. To deploy:
 
-1. Authenticate Wrangler: `npx wrangler login`
+1. Authenticate Wrangler: `npx wrangler login` in an interactive terminal, or provide `CLOUDFLARE_API_TOKEN` with D1 and Workers permissions in non-interactive environments. Verify with `npx wrangler whoami`.
 2. Create D1: `npx wrangler d1 create cerberus-workspace`
 3. Replace `REPLACE_WITH_D1_DATABASE_ID` in `wrangler.jsonc` with the returned ID.
 4. Set bootstrap secret: `npx wrangler secret put SETUP_TOKEN`
