@@ -60,7 +60,7 @@ npm run test:integration
 npm run build
 ```
 
-`npm test` runs the jsdom unit/component suite (64 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (59 tests across 11 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, workspace modules, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry.
+`npm test` runs the jsdom unit/component suite (67 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (59 tests across 11 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, workspace modules, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry.
 
 ## Cloudflare deployment preparation
 
@@ -87,6 +87,7 @@ Production must set `APP_ENV` to `production` and `APP_ORIGIN` to the exact depl
 - A submitter cannot administratively review their own submission, including Mostafa in member mode.
 - GitHub webhooks are verified with constant-time HMAC-SHA256 comparison; unsigned or malformed deliveries are rejected when a secret is configured.
 - Uploaded binaries are not stored in D1 and R2 is not used.
+- Static assets ship a `_headers` policy with CSP, HSTS, `nosniff`, frame denial, no-referrer, and a restrictive permissions policy. Inline styles remain allowed because the React UI uses style attributes; scripts remain self-only.
 
 ## Known limitations
 

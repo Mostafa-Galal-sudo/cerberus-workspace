@@ -20,13 +20,20 @@ app.use('*', secureHeaders({
   contentSecurityPolicy: {
     defaultSrc: ["'self'"],
     scriptSrc: ["'self'"],
-    styleSrc: ["'self'", 'https://fonts.googleapis.com'],
+    styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
     fontSrc: ["'self'", 'https://fonts.gstatic.com'],
     imgSrc: ["'self'", 'data:', 'https:'],
     connectSrc: ["'self'"],
     frameAncestors: ["'none'"],
+    baseUri: ["'self'"],
+    formAction: ["'self'"],
+    objectSrc: ["'none'"],
+    frameSrc: ["'none'"],
+    manifestSrc: ["'self'"],
+    upgradeInsecureRequests: [],
   },
   referrerPolicy: 'no-referrer',
+  xFrameOptions: 'DENY',
 }));
 app.use('/api/*', async (context, next) => {
   const origin = context.req.header('Origin');

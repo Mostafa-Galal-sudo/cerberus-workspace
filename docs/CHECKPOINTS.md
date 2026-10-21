@@ -96,6 +96,7 @@
 **Status: implemented locally; remote deployment not provisioned.**
 
 - Administrative metrics, audit-log browser, workspace settings loaded from persisted state, checksummed full-database export, checksum-required backup integrity verification, and audit records for export/verification runs.
+- Static asset responses carry a `_headers` policy with CSP, HSTS, `nosniff`, frame denial, no-referrer, and a restrictive permissions policy; the Worker applies matching security headers to API responses. Scripts remain self-only while inline styles remain permitted for the React UI.
 - Restore is verification-only; it does not overwrite live tables and does not report a restore that did not happen.
 - `wrangler.jsonc` still contains `REPLACE_WITH_D1_DATABASE_ID`. No production D1 database or Worker deployment has been created.
 - CI runs typecheck, lint, unit tests, D1-backed integration tests, and the production build.
@@ -110,4 +111,4 @@ npm run test:integration
 npm run build
 ```
 
-The integration suite runs the real Hono worker against an isolated D1 database through `@cloudflare/vitest-pool-workers`, applying every migration before each test file. It covers onboarding, authentication/CSRF/RBAC, password recovery, task and checkpoint review, multi-evidence persistence, task comments, chat/wiki/issues/hardware/experiments/decisions/worklogs/announcements, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry. Current totals: 64 unit tests and 59 integration tests across 11 files.
+The integration suite runs the real Hono worker against an isolated D1 database through `@cloudflare/vitest-pool-workers`, applying every migration before each test file. It covers onboarding, authentication/CSRF/RBAC, password recovery, task and checkpoint review, multi-evidence persistence, task comments, chat/wiki/issues/hardware/experiments/decisions/worklogs/announcements, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry. Current totals: 67 unit tests and 59 integration tests across 11 files.
