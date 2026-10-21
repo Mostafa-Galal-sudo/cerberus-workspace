@@ -18,7 +18,8 @@
 - Forced first-login password replacement, one-time invitation activation and reissue, PBKDF2 password hashing, opaque server-side sessions, HttpOnly cookies, CSRF verification, login throttling, logout, role and permission checks, session revocation on suspension, and audit records.
 - Administrative one-time password recovery: hashed 32-byte tokens with one-hour expiry, single-use enforcement, reissue retirement, per-address throttling, session-wide revocation after replacement, and a public `/reset-password` completion page. Links are delivered out of band; no email transport is implemented.
 - Mostafa is one identity with member, technical lead, and super-admin roles; the interface switches modes without duplicating the account.
-- Verified against real D1 in `tests/integration/auth-and-boundaries.test.ts`, `onboarding.test.ts`, `users-dashboard.test.ts`, and `password-reset.test.ts`.
+- Administrative and review routes are also guarded in the client; a signed-in member who requests them directly is redirected to the overview instead of seeing zeroed administrative panels.
+- Verified against real D1 in `tests/integration/auth-and-boundaries.test.ts`, `onboarding.test.ts`, `users-dashboard.test.ts`, and `password-reset.test.ts`; route-guard redirects are covered in `tests/unit/route-guards.test.tsx`.
 
 ## WS-03 — Members, teams, and roadmap
 
@@ -109,4 +110,4 @@ npm run test:integration
 npm run build
 ```
 
-The integration suite runs the real Hono worker against an isolated D1 database through `@cloudflare/vitest-pool-workers`, applying every migration before each test file. It covers onboarding, authentication/CSRF/RBAC, password recovery, task and checkpoint review, multi-evidence persistence, task comments, chat/wiki/issues/hardware/experiments/decisions/worklogs/announcements, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry. Current totals: 61 unit tests and 59 integration tests across 11 files.
+The integration suite runs the real Hono worker against an isolated D1 database through `@cloudflare/vitest-pool-workers`, applying every migration before each test file. It covers onboarding, authentication/CSRF/RBAC, password recovery, task and checkpoint review, multi-evidence persistence, task comments, chat/wiki/issues/hardware/experiments/decisions/worklogs/announcements, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry. Current totals: 64 unit tests and 59 integration tests across 11 files.

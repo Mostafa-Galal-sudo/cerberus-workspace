@@ -454,6 +454,7 @@ pre,
 
 .page-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
   gap: 24px;
@@ -2064,5 +2065,48 @@ pre,
   .printable-report-canvas table td {
     color: #000000 !important;
     border-color: #cccccc !important;
+  }
+}
+
+.members-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.member-detail-panel {
+  min-width: 0;
+}
+
+.member-detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+}
+
+.member-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.member-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 16px;
+}
+
+@media (max-width: 1100px) {
+  .members-layout {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

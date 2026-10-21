@@ -149,12 +149,13 @@ export function AdminCommandCenterPage() {
           <p>System-wide telemetry, cryptographic audit logs, database backups, and access policy control.</p>
         </div>
 
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
           <Button
             variant="secondary"
             size="sm"
             onClick={() => exportBackup.mutate()}
             disabled={exportBackup.isPending}
+            style={{ whiteSpace: 'nowrap' }}
           >
             <Download size={14} /> {exportBackup.isPending ? 'Generating...' : 'Export DB Backup'}
           </Button>
@@ -189,7 +190,7 @@ export function AdminCommandCenterPage() {
           size="sm"
           onClick={() => setActiveTab('backup')}
         >
-          <Database size={15} /> Backup & Recovery
+          <Database size={15} /> Backup Integrity
         </Button>
         <Button
           variant={activeTab === 'settings' ? 'secondary' : 'ghost'}

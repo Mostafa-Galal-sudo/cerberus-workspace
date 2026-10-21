@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import { Navigate, createBrowserRouter } from 'react-router-dom';
 import { useAuth } from './auth-context';
+import { AdminGate } from './route-guards';
 import { AppShell } from '../components/app-shell';
 import { PageSkeleton } from '../components/ui';
 import { ActivationPage } from '../features/auth/activation-page';
@@ -45,7 +46,14 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: 'tasks', element: <TasksPage /> },
       { path: 'tasks/:taskId', element: <TaskDetailPage /> },
-      { path: 'reviews', element: <ReviewQueuePage /> },
+      {
+        element: <AdminGate />,
+        children: [
+          { path: 'reviews', element: <ReviewQueuePage /> },
+          { path: 'admin', element: <AdminCommandCenterPage /> },
+          { path: 'settings', element: <AdminCommandCenterPage /> },
+        ],
+      },
       { path: 'members', element: <MembersPage /> },
       { path: 'chat', element: <ChatPage /> },
       { path: 'announcements', element: <AnnouncementsPage /> },
@@ -58,10 +66,8 @@ export const router = createBrowserRouter([
       { path: 'decisions', element: <DecisionsPage /> },
       { path: 'worklogs', element: <WorklogsPage /> },
       { path: 'integrations/github', element: <GithubPage /> },
-      { path: 'admin', element: <AdminCommandCenterPage /> },
       { path: 'assistant', element: <AssistantPage /> },
       { path: 'reports', element: <ReportsPage /> },
-      { path: 'settings', element: <AdminCommandCenterPage /> },
     ],
   },
   { path: '*', element: <Navigate to="/" replace /> },

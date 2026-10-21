@@ -120,10 +120,12 @@ export function AppShell() {
             <Bell size={16} />
             <span>Alerts</span>
           </NavLink>
-          <NavLink className="utility-link" to="/settings">
-            <Settings size={16} />
-            <span>Settings</span>
-          </NavLink>
+          {mode === 'admin' && (
+            <NavLink className="utility-link" to="/settings">
+              <Settings size={16} />
+              <span>Settings</span>
+            </NavLink>
+          )}
         </div>
 
         <button className="profile-block" onClick={() => void logout()} title="Sign out">

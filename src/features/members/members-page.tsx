@@ -246,7 +246,7 @@ export function MembersPage() {
         </div>
       )}
 
-      <div className="members-layout" style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 360px) 1fr', gap: '24px', alignItems: 'start' }}>
+      <div className="members-layout">
         {/* Left Column: Member Roster */}
         <Panel className="member-list-panel">
           <div className="search-bar" style={{ marginBottom: '16px' }}>
@@ -317,14 +317,14 @@ export function MembersPage() {
         {/* Right Column: Member Inspector */}
         {selectedMember ? (
           <Panel className="member-detail-panel">
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--color-border)', paddingBottom: '16px', marginBottom: '16px' }}>
+            <header className="member-detail-header">
               <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
                 <span className="avatar" style={{ width: '48px', height: '48px', fontSize: '1.1rem' }}>
                   {selectedMember.name.split(' ').map((p) => p[0]).slice(0, 2).join('')}
                 </span>
                 <div>
                   <h2 style={{ margin: 0, fontSize: '1.25rem' }}>{selectedMember.name}</h2>
-                  <p style={{ margin: '2px 0 0', color: 'var(--color-muted)', fontSize: '0.85rem' }}>{selectedMember.email}</p>
+                  <p style={{ margin: '2px 0 0', color: 'var(--color-muted)', fontSize: '0.85rem', wordBreak: 'break-word' }}>{selectedMember.email}</p>
                   <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
                     {selectedMember.roles.split(',').map((role) => (
                       <span key={role} className="role-chip" style={{ fontSize: '0.7rem', padding: '2px 8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}>
@@ -337,7 +337,7 @@ export function MembersPage() {
               </div>
 
               {/* Administrative actions */}
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div className="member-detail-actions">
                 {(isAdmin || user?.id === selectedMember.id) && !editingProfile && (
                   <Button variant="secondary" size="sm" onClick={handleStartEdit}>
                     <Edit3 size={14} /> Edit profile
@@ -517,7 +517,7 @@ export function MembersPage() {
             )}
 
             {/* Navigation Tabs */}
-            <div className="tab-row" style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--color-border)', marginBottom: '16px' }}>
+            <div className="tab-row member-tabs">
               <button
                 type="button"
                 className={`tab-btn ${activeTab === 'profile' ? 'active' : ''}`}

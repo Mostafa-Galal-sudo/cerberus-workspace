@@ -60,7 +60,7 @@ npm run test:integration
 npm run build
 ```
 
-`npm test` runs the jsdom unit/component suite (61 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (59 tests across 11 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, workspace modules, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry.
+`npm test` runs the jsdom unit/component suite (64 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (59 tests across 11 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, workspace modules, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry.
 
 ## Cloudflare deployment preparation
 
