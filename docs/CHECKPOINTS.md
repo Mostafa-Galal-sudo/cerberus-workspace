@@ -4,7 +4,7 @@
 
 ## WS-01 — Foundation and database
 
-**Status: implemented and locally verifiable.**
+**Status: implemented and deployed to production.**
 
 - React/Vite client and Cloudflare Worker are served as one deployment.
 - D1 migrations define identity, projects, roadmaps, review workflows, communication, documentation, inventory, experiments, GitHub metadata, progress, and audit foundations (`0001`), forced password replacement (`0002`), workspace modules (`0003`), multi-evidence submissions plus checkpoint version uniqueness (`0004`), and one-time password-reset tokens (`0005`).
@@ -16,6 +16,7 @@
 **Status: implemented and integration-tested.**
 
 - Forced first-login password replacement, one-time invitation activation and reissue, PBKDF2 password hashing, opaque server-side sessions, HttpOnly cookies, CSRF verification, login throttling, logout, role and permission checks, session revocation on suspension, and audit records.
+- Password hashes use PBKDF2-SHA-256 with a per-password salt and 100,000 iterations, the maximum supported by Cloudflare Workers Web Crypto. The iteration count is embedded in each hash so the work factor can be raised later.
 - Administrative one-time password recovery: hashed 32-byte tokens with one-hour expiry, single-use enforcement, reissue retirement, per-address throttling, session-wide revocation after replacement, and a public `/reset-password` completion page. Links are delivered out of band; no email transport is implemented.
 - Mostafa is one identity with member, technical lead, and super-admin roles; the interface switches modes without duplicating the account.
 - Administrative and review routes are also guarded in the client; a signed-in member who requests them directly is redirected to the overview instead of seeing zeroed administrative panels.
@@ -93,12 +94,12 @@
 
 ## WS-12 — Administration, backup, and deployment
 
-**Status: implemented locally; remote deployment not provisioned.**
+**Status: implemented and deployed to Cloudflare.**
 
 - Administrative metrics, audit-log browser, workspace settings loaded from persisted state, checksummed full-database export, checksum-required backup integrity verification, and audit records for export/verification runs.
 - Static asset responses carry a `_headers` policy with CSP, HSTS, `nosniff`, frame denial, no-referrer, and a restrictive permissions policy; the Worker applies matching security headers to API responses. Scripts remain self-only while inline styles remain permitted for the React UI.
 - Restore is verification-only; it does not overwrite live tables and does not report a restore that did not happen.
-- `wrangler.jsonc` still contains `REPLACE_WITH_D1_DATABASE_ID`. No production D1 database or Worker deployment has been created.
+- Production Worker `cerberus-workspace` is deployed at `https://cerberus-workspace.mosthistory139.workers.dev` with D1 database `cerberus-workspace` in WEUR. Migrations `0001`–`0005` are applied, initial data is seeded, the setup secret has been deleted, and the first administrator password was replaced at first login.
 - CI runs typecheck, lint, unit tests, D1-backed integration tests, and the production build.
 
 ## Verification
@@ -111,4 +112,4 @@ npm run test:integration
 npm run build
 ```
 
-The integration suite runs the real Hono worker against an isolated D1 database through `@cloudflare/vitest-pool-workers`, applying every migration before each test file. It covers onboarding, authentication/CSRF/RBAC, password recovery, task and checkpoint review, multi-evidence persistence, task comments, chat/wiki/issues/hardware/experiments/decisions/worklogs/announcements, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry. Current totals: 67 unit tests and 59 integration tests across 11 files.
+The integration suite runs the real Hono worker against an isolated D1 database through `@cloudflare/vitest-pool-workers`, applying every migration before each test file. It covers onboarding, authentication/CSRF/RBAC, password recovery, task and checkpoint review, multi-evidence persistence, task comments, chat/wiki/issues/hardware/experiments/decisions/worklogs/announcements, GitHub webhooks, administration, backup checksums, CSV exports, and assistant telemetry. Current totals: 68 unit tests and 59 integration tests across 11 files.
