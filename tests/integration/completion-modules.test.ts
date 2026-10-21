@@ -10,6 +10,7 @@ import {
   SUPERVISOR_ID,
   call,
   createTask,
+  databaseRun,
   databaseValue,
   login,
   readBody,
@@ -167,6 +168,31 @@ describe('completed workspace modules', () => {
       await call(member, '/api/v1/collaboration/events/poll?after=0'),
     );
     expect(archiveEvents.some((event) => event.eventType === 'attachment.archived' && event.payload.attachmentId === uploaded.id)).toBe(true);
+  });
+
+  it('restricts submission evidence to the submitter and reviewers', async () => {
+    const taskId = await createTask(admin, { assigneeId: MEMBER_ID, title: 'Submission evidence access task' });
+    await databaseRun(`INSERT INTO submissions (id, task_id, submitted_by, summary, version) VALUES (?, ?, ?, ?, 1)`,
+      'submission_access', taskId, MEMBER_ID, 'Private submission evidence');
+    await databaseRun(`INSERT INTO attachments (id, owner_id, resource_type, resource_id, storage_type, label, url)
+      VALUES (?, ?, 'submission', ?, 'external_private_link', ?, ?)`,
+      'attachment_submission_access', MEMBER_ID, 'submission_access', 'Private evidence link', 'https://example.com/private-evidence');
+
+    const hiddenList = await call(memberTwo, '/api/v1/attachments?resourceType=submission&resourceId=submission_access');
+    expect(hiddenList.status).toBe(403);
+    const supervisorList = await call(supervisor, '/api/v1/attachments?resourceType=submission&resourceId=submission_access');
+    expect(supervisorList.status).toBe(403);
+    const hiddenDownload = await call(memberTwo, '/api/v1/attachments/attachment_submission_access/download');
+    expect(hiddenDownload.status).toBe(403);
+
+    const ownerList = await readData<Array<{ id: string }>>(
+      await call(member, '/api/v1/attachments?resourceType=submission&resourceId=submission_access'),
+    );
+    expect(ownerList.map((row) => row.id)).toContain('attachment_submission_access');
+    const reviewerList = await readData<Array<{ id: string }>>(
+      await call(admin, '/api/v1/attachments?resourceType=submission&resourceId=submission_access'),
+    );
+    expect(reviewerList.map((row) => row.id)).toContain('attachment_submission_access');
   });
 
   it('accepts password recovery requests without leaking account existence', async () => {

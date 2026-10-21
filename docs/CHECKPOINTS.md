@@ -52,7 +52,7 @@
 
 - Direct/team channels, channel-membership enforcement, message posting, author-only editing, author/admin deletion, read markers, announcements with audience filtering, and per-user notifications.
 - `workspace_events` persists one row per recipient. The SSE endpoint streams events with `Last-Event-ID` replay, a bounded 25-second connection, and a 2-second internal poll; the client invalidates only the affected React Query families. A 30-second polling fallback covers reconnects and unsupported environments.
-- Task evidence attachments use a private R2 binding, 10 MB limits, sanitized filenames, SHA-256 checksums stored in D1, resource-level upload authorization, audited downloads, and soft archival with an audit record. `503 ATTACHMENTS_UNAVAILABLE` is returned when the binding is absent.
+- Task evidence attachments use a private R2 binding, 10 MB limits, sanitized filenames, SHA-256 checksums stored in D1, resource-level upload authorization, audited downloads, and soft archival with an audit record. Submission evidence is restricted to the submitter and reviewers; `503 ATTACHMENTS_UNAVAILABLE` is returned when the binding is absent.
 
 ## WS-06 — Documentation wiki
 
@@ -120,4 +120,4 @@ npm run build
 npm run test:e2e
 ```
 
-The integration suite runs the real Hono worker against an isolated D1 database through `@cloudflare/vitest-pool-workers`, applying every migration before each test file. It covers onboarding, authentication/CSRF/RBAC, password recovery, task and checkpoint review, multi-evidence persistence, task comments, realtime events, R2 attachments, reassignment, server PDFs, chat/wiki/issues/hardware/experiments/decisions/worklogs/announcements, GitHub webhooks and outbound guards, administration, backup checksums, CSV exports, and assistant telemetry. Current totals: 72 unit tests, 66 integration tests across 12 files, and 6 Playwright end-to-end tests against an isolated local Worker, D1, and R2 state.
+The integration suite runs the real Hono worker against an isolated D1 database through `@cloudflare/vitest-pool-workers`, applying every migration before each test file. It covers onboarding, authentication/CSRF/RBAC, password recovery, task and checkpoint review, multi-evidence persistence, task comments, realtime events, R2 attachments, submission-evidence access control, reassignment, server PDFs, chat/wiki/issues/hardware/experiments/decisions/worklogs/announcements, GitHub webhooks and outbound guards, administration, backup checksums, CSV exports, and assistant telemetry. Current totals: 72 unit tests, 67 integration tests across 12 files, and 6 Playwright end-to-end tests against an isolated local Worker, D1, and R2 state.

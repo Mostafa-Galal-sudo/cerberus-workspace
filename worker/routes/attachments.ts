@@ -19,6 +19,12 @@ function asciiFilename(name: string): string {
   return sanitizeFilename(name).replace(/["\\\r\n]/g, '_');
 }
 
+async function canView(db: D1Database, user: AuthUser, resourceType: string, resourceId: string): Promise<boolean> {
+  if (resourceType !== 'submission') return true;
+  const row = await db.prepare(`SELECT submitted_by FROM submissions WHERE id=?`).bind(resourceId).first<{ submitted_by: string }>();
+  return Boolean(row) && (row!.submitted_by === user.id || user.permissions.includes('review.admin') || user.permissions.includes('workspace.admin'));
+}
+
 async function canAttach(db: D1Database, user: AuthUser, resourceType: string, resourceId: string): Promise<boolean> {
   if (user.roles.includes('project_supervisor')) return false;
 
@@ -55,6 +61,9 @@ attachmentRoutes.get('/', async (context) => {
   const resourceId = context.req.query('resourceId') ?? '';
   if (!SAFE_RESOURCE_TYPES.has(resourceType) || !resourceId) {
     return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'resourceType and resourceId are required' } }, 422);
+  }
+  if (!await canView(context.env.DB, context.get('user'), resourceType, resourceId)) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'You cannot view evidence for that record' } }, 403);
   }
 
   const rows = await context.env.DB.prepare(`SELECT a.id, a.label, a.filename, a.storage_type AS storageType, a.mime_type AS mimeType,
@@ -134,11 +143,14 @@ attachmentRoutes.post('/', async (context) => {
 
 attachmentRoutes.get('/:id/download', async (context) => {
   const row = await context.env.DB.prepare(`SELECT id, storage_type AS storageType, url, public_id AS publicId, label, filename,
-      mime_type AS mimeType, checksum_sha256 AS checksumSha256
+      mime_type AS mimeType, checksum_sha256 AS checksumSha256, resource_type AS resourceType, resource_id AS resourceId
     FROM attachments WHERE id=? AND archived_at IS NULL`).bind(context.req.param('id')).first<{
-      id: string; storageType: string; url: string; publicId: string | null; label: string; filename: string | null; mimeType: string | null; checksumSha256: string | null;
+      id: string; storageType: string; url: string; publicId: string | null; label: string; filename: string | null; mimeType: string | null; checksumSha256: string | null; resourceType: string; resourceId: string;
     }>();
   if (!row) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Attachment not found' } }, 404);
+  if (!await canView(context.env.DB, context.get('user'), row.resourceType, row.resourceId)) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'You cannot view evidence for that record' } }, 403);
+  }
 
   if (row.storageType !== 'r2') {
     return context.redirect(row.url, 302);

@@ -226,3 +226,7 @@ export async function seedCheckpoint(fixture: CheckpointFixture): Promise<void> 
 export async function databaseValue<T>(query: string, ...values: unknown[]): Promise<T | null> {
   return env.DB.prepare(query).bind(...values).first<T>();
 }
+
+export async function databaseRun(query: string, ...values: unknown[]): Promise<void> {
+  await env.DB.prepare(query).bind(...values).run();
+}

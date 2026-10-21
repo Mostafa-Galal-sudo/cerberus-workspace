@@ -66,7 +66,7 @@ npm run build
 npm run test:e2e
 ```
 
-`npm test` runs the jsdom unit/component suite (72 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (66 tests across 12 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, realtime event publication, R2 attachments, reassignment, server PDFs, workspace modules, GitHub webhooks and outbound guards, administration, backup checksums, CSV exports, and assistant telemetry. `npm run test:e2e` builds the production bundle, applies migrations to an isolated local D1/R2 state, and runs the Playwright suite (6 browser tests). Install the bundled browser with `npx playwright install chromium`; on Windows, an existing Edge installation can be used with `$env:E2E_BROWSER_CHANNEL='msedge'`.
+`npm test` runs the jsdom unit/component suite (72 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (67 tests across 12 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, realtime event publication, R2 attachments, submission-evidence access control, reassignment, server PDFs, workspace modules, GitHub webhooks and outbound guards, administration, backup checksums, CSV exports, and assistant telemetry. `npm run test:e2e` builds the production bundle, applies migrations to an isolated local D1/R2 state, and runs the Playwright suite (6 browser tests). Install the bundled browser with `npx playwright install chromium`; on Windows, an existing Edge installation can be used with `$env:E2E_BROWSER_CHANNEL='msedge'`.
 
 ## Cloudflare deployment
 
@@ -96,7 +96,7 @@ Current production state (2026-10-22): migrations `0001`–`0006` are applied an
 - Authorization is enforced in the Worker. Client-side navigation is not a security boundary.
 - A submitter cannot administratively review their own submission, including Mostafa in member mode.
 - GitHub webhooks are verified with constant-time HMAC-SHA256 comparison; unsigned or malformed deliveries are rejected when a secret is configured.
-- Uploaded evidence binaries are stored as private R2 objects, limited to 10 MB, and referenced from D1 only by metadata, object key, and SHA-256 checksum. Downloads require an authenticated workspace session, set `nosniff` and sandbox headers, and are recorded in the audit log. Legacy external attachment links remain redirect-only.
+- Uploaded evidence binaries are stored as private R2 objects, limited to 10 MB, and referenced from D1 only by metadata, object key, and SHA-256 checksum. Downloads require an authenticated workspace session, set `nosniff` and sandbox headers, and are recorded in the audit log. Submission evidence is restricted to the submitter and reviewers. Legacy external attachment links remain redirect-only.
 - Static assets ship a `_headers` policy with CSP, HSTS, `nosniff`, frame denial, no-referrer, and a restrictive permissions policy. Inline styles remain allowed because the React UI uses style attributes; scripts remain self-only.
 
 ## Known limitations
