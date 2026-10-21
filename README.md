@@ -97,4 +97,4 @@ Production is deployed at `https://cerberus-workspace.mosthistory139.workers.dev
 - Report exports are CSV and browser print; server-generated PDF exports are not implemented.
 - Backup restore is verification-only and does not overwrite live tables.
 - Outbound GitHub App tokens, PR creation, and repository synchronization are not implemented.
-- Remote D1/Worker deployment and end-to-end browser tests remain.
+- Automated end-to-end browser tests remain.
