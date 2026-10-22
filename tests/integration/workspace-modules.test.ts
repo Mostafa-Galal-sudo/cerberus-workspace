@@ -109,6 +109,53 @@ describe('collaboration and workspace modules', () => {
     expect(forbidden.status).toBe(403);
   });
 
+  it('enforces wiki visibility and edit rights', async () => {
+    const adminPage = await call(admin, '/api/v1/workspace/wiki', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Admin-only Integration Notes',
+        slug: 'admin-only-integration-notes',
+        category: 'Testing',
+        contentMarkdown: '# Restricted',
+        visibility: 'admin',
+      }),
+    });
+    expect(adminPage.status).toBe(201);
+    const adminPageId = (await readData<{ id: string }>(adminPage)).id;
+
+    const memberList = await readData<Array<{ slug: string }>>(await call(member, '/api/v1/workspace/wiki'));
+    expect(memberList.some((page) => page.slug === 'admin-only-integration-notes')).toBe(false);
+    expect((await call(member, '/api/v1/workspace/wiki/admin-only-integration-notes')).status).toBe(404);
+    expect((await call(member, `/api/v1/workspace/wiki/${adminPageId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ contentMarkdown: '# Unauthorized revision' }),
+    })).status).toBe(404);
+
+    const memberPage = await call(member, '/api/v1/workspace/wiki', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Member Integration Notes',
+        slug: 'member-integration-notes',
+        category: 'Testing',
+        contentMarkdown: '# Shared with members',
+        visibility: 'members',
+      }),
+    });
+    expect(memberPage.status).toBe(201);
+    const memberPageId = (await readData<{ id: string }>(memberPage)).id;
+
+    const supervisor = await login('supervisor@cerberus.test');
+    expect((await call(supervisor, '/api/v1/workspace/wiki/member-integration-notes')).status).toBe(200);
+    expect((await call(supervisor, `/api/v1/workspace/wiki/${memberPageId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ contentMarkdown: '# Supervisor revision' }),
+    })).status).toBe(403);
+    expect((await call(memberTwo, `/api/v1/workspace/wiki/${memberPageId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ contentMarkdown: '# Member revision' }),
+    })).status).toBe(201);
+  });
+
   it('enforces issue resolution ownership', async () => {
     const create = await call(member, '/api/v1/workspace/bugs', {
       method: 'POST',
@@ -229,6 +276,9 @@ describe('collaboration and workspace modules', () => {
     const entries = await readData<Array<{ completed_work: string }>>(worklogs);
     expect(entries.length).toBeGreaterThan(0);
 
+    expect((await call(memberTwo, `/api/v1/workspace/worklogs?userId=${MEMBER_ID}`)).status).toBe(403);
+    expect((await call(admin, `/api/v1/workspace/worklogs?userId=${MEMBER_ID}`)).status).toBe(200);
+
     const memberDecision = await call(member, '/api/v1/workspace/decisions', {
       method: 'POST',
       body: JSON.stringify({ title: 'Member decision', status: 'proposed', reasoning: 'A member should not be able to record an architecture decision.' }),
@@ -271,9 +321,14 @@ describe('collaboration and workspace modules', () => {
       body: JSON.stringify({ title: 'Supervisor-only briefing', body: 'This briefing is restricted to academic supervision.', audience: 'supervisors' }),
     });
     expect(supervisorOnly.status).toBe(201);
+    const supervisorOnlyId = (await readData<{ id: string }>(supervisorOnly)).id;
 
     const memberView = await call(member, '/api/v1/collaboration/announcements');
     const memberAnnouncements = await readData<Array<{ title: string }>>(memberView);
     expect(memberAnnouncements.some((announcement) => announcement.title === 'Supervisor-only briefing')).toBe(false);
+    expect((await call(member, `/api/v1/collaboration/announcements/${supervisorOnlyId}/read`, { method: 'POST' })).status).toBe(404);
+
+    const supervisor = await login('supervisor@cerberus.test');
+    expect((await call(supervisor, `/api/v1/collaboration/announcements/${supervisorOnlyId}/read`, { method: 'POST' })).status).toBe(200);
   });
 });

@@ -9,6 +9,7 @@ export const userRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 userRoutes.use('*', requireAuth, requirePasswordChanged);
 
 userRoutes.get('/', async (context) => {
+  const user = context.get('user');
   const rows = await context.env.DB.prepare(`SELECT u.id, u.display_name AS name, u.email, u.specialization, u.bio, u.status,
     u.last_activity_at AS lastActivityAt, u.created_at AS createdAt,
     GROUP_CONCAT(r.name) AS roles,
@@ -21,15 +22,22 @@ userRoutes.get('/', async (context) => {
     LEFT JOIN roles r ON r.id=ur.role_id
     WHERE u.archived_at IS NULL
     GROUP BY u.id
-    ORDER BY u.display_name`).all();
-  return context.json({ ok: true, data: rows.results });
+    ORDER BY u.display_name`).all<Record<string, unknown>>();
+  const privileged = user.permissions.includes('workspace.admin') || user.roles.includes('project_supervisor');
+  return context.json({
+    ok: true,
+    data: rows.results.map((row) => privileged || row.id === user.id
+      ? row
+      : { ...row, email: '', bio: null, lastActivityAt: null }),
+  });
 });
 
 userRoutes.get('/:id', async (context) => {
-  const user = await context.env.DB.prepare(`SELECT u.id, u.display_name AS name, u.email, u.specialization, u.bio, u.status,
+  const user = context.get('user');
+  const target = await context.env.DB.prepare(`SELECT u.id, u.display_name AS name, u.email, u.specialization, u.bio, u.status,
     u.last_activity_at AS lastActivityAt, u.created_at AS createdAt
-    FROM users u WHERE u.id=? AND u.archived_at IS NULL`).bind(context.req.param('id')).first();
-  if (!user) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+    FROM users u WHERE u.id=? AND u.archived_at IS NULL`).bind(context.req.param('id')).first<Record<string, unknown>>();
+  if (!target) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
 
   const [roles, permissions, team] = await Promise.all([
     context.env.DB.prepare(`SELECT r.id, r.name, r.description FROM roles r JOIN user_roles ur ON ur.role_id=r.id WHERE ur.user_id=?`).bind(context.req.param('id')).all(),
@@ -37,12 +45,18 @@ userRoutes.get('/:id', async (context) => {
     context.env.DB.prepare(`SELECT t.id, t.name, t.description FROM teams t JOIN team_members tm ON tm.team_id=t.id WHERE tm.user_id=?`).bind(context.req.param('id')).first(),
   ]);
 
+  const privileged = user.permissions.includes('workspace.admin') || user.roles.includes('project_supervisor');
+  const visibleTarget = privileged || target.id === user.id
+    ? target
+    : { ...target, email: '', bio: null, lastActivityAt: null };
   return context.json({
     ok: true,
     data: {
-      ...user,
+      ...visibleTarget,
       roles: (roles.results as Array<{ id: string; name: string }>).map((r) => r.name),
-      permissions: (permissions.results as Array<{ name: string }>).map((p) => p.name),
+      permissions: privileged || target.id === user.id
+        ? (permissions.results as Array<{ name: string }>).map((p) => p.name)
+        : [],
       team,
     },
   });
@@ -52,11 +66,20 @@ userRoutes.patch('/:id/status', requirePermission('workspace.admin'), async (con
   const body: { status?: string } = await context.req.json<{ status?: string }>().catch(() => ({}));
   if (!body.status || !['active', 'suspended'].includes(body.status)) return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid account status' } }, 422);
   if (context.req.param('id') === context.get('user').id && body.status === 'suspended') return context.json({ ok: false, error: { code: 'SELF_SUSPEND_FORBIDDEN', message: 'You cannot suspend your own account' } }, 409);
-  await context.env.DB.batch([
-    context.env.DB.prepare(`UPDATE users SET status=?, updated_at=unixepoch() WHERE id=?`).bind(body.status, context.req.param('id')),
-    audit(context.env, context.get('user').id, `user.status_${body.status}`, 'user', context.req.param('id')),
-    ...(body.status === 'suspended' ? [context.env.DB.prepare(`UPDATE sessions SET revoked_at=unixepoch() WHERE user_id=? AND revoked_at IS NULL`).bind(context.req.param('id'))] : []),
-  ]);
+  const target = await context.env.DB.prepare(`SELECT id FROM users WHERE id=? AND archived_at IS NULL`).bind(context.req.param('id')).first();
+  if (!target) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  try {
+    await context.env.DB.batch([
+      context.env.DB.prepare(`UPDATE users SET status=?, updated_at=unixepoch() WHERE id=?`).bind(body.status, context.req.param('id')),
+      audit(context.env, context.get('user').id, `user.status_${body.status}`, 'user', context.req.param('id')),
+      ...(body.status === 'suspended' ? [context.env.DB.prepare(`UPDATE sessions SET revoked_at=unixepoch() WHERE user_id=? AND revoked_at IS NULL`).bind(context.req.param('id'))] : []),
+    ]);
+  } catch (error) {
+    if (/LAST_ADMIN/i.test(error instanceof Error ? error.message : String(error))) {
+      return context.json({ ok: false, error: { code: 'LAST_ADMIN_PROTECTED', message: 'Cannot suspend the last super-admin' } }, 409);
+    }
+    throw error;
+  }
   return context.json({ ok: true, data: { status: body.status } });
 });
 
@@ -120,8 +143,10 @@ userRoutes.post('/:id/reassign-work', requirePermission('workspace.admin'), asyn
   if (target.status !== 'active') {
     return context.json({ ok: false, error: { code: 'TARGET_NOT_ACTIVE', message: 'Reactivate the target account before assigning work' } }, 409);
   }
-  const targetIsContributor = await context.env.DB.prepare(`SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
-    WHERE ur.user_id=? AND r.name IN ('team_member','super_admin','technical_lead') LIMIT 1`).bind(targetId).first();
+  const targetIsContributor = await context.env.DB.prepare(`SELECT 1 FROM user_roles ur
+    JOIN role_permissions rp ON rp.role_id=ur.role_id
+    JOIN permissions p ON p.id=rp.permission_id
+    WHERE ur.user_id=? AND p.name='task.work' LIMIT 1`).bind(targetId).first();
   if (!targetIsContributor) {
     return context.json({ ok: false, error: { code: 'TARGET_NOT_CONTRIBUTOR', message: 'Work can only be transferred to a team member or technical lead' } }, 409);
   }
@@ -228,19 +253,32 @@ userRoutes.patch('/:id/profile', async (context) => {
     return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'You can only edit your own profile' } }, 403);
   }
 
+  const target = await context.env.DB.prepare(`SELECT id FROM users WHERE id=? AND archived_at IS NULL`).bind(targetId).first();
+  if (!target) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+
   const body = await context.req.json<{ displayName?: string; specialization?: string; bio?: string }>().catch(() => ({} as { displayName?: string; specialization?: string; bio?: string }));
   const updates: string[] = [];
   const binds: unknown[] = [];
 
-  if (body.displayName && body.displayName.trim().length >= 2) {
+  if (body.displayName !== undefined) {
+    const displayName = body.displayName.trim();
+    if (displayName.length < 2 || displayName.length > 120) {
+      return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Display name must be between 2 and 120 characters' } }, 422);
+    }
     updates.push('display_name = ?');
-    binds.push(body.displayName.trim());
+    binds.push(displayName);
   }
-  if (typeof body.specialization === 'string') {
+  if (body.specialization !== undefined) {
+    if (typeof body.specialization !== 'string' || body.specialization.trim().length > 180) {
+      return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Specialization must be 180 characters or fewer' } }, 422);
+    }
     updates.push('specialization = ?');
     binds.push(body.specialization.trim());
   }
-  if (typeof body.bio === 'string') {
+  if (body.bio !== undefined) {
+    if (typeof body.bio !== 'string' || body.bio.trim().length > 2_000) {
+      return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Bio must be 2000 characters or fewer' } }, 422);
+    }
     updates.push('bio = ?');
     binds.push(body.bio.trim());
   }
@@ -263,22 +301,33 @@ userRoutes.patch('/:id/profile', async (context) => {
 userRoutes.patch('/:id/roles', requirePermission('workspace.admin'), async (context) => {
   const targetId = context.req.param('id');
   const body = await context.req.json<{ roles?: string[] }>().catch(() => ({} as { roles?: string[] }));
-  if (!Array.isArray(body.roles) || body.roles.length === 0) {
+  const requestedRoles = Array.isArray(body.roles) ? [...new Set(body.roles.filter((role): role is string => typeof role === 'string'))] : [];
+  if (requestedRoles.length === 0) {
     return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'At least one role is required' } }, 422);
   }
+
+  const target = await context.env.DB.prepare(`SELECT id FROM users WHERE id=? AND archived_at IS NULL`).bind(targetId).first();
+  if (!target) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
 
   const validRoleRows = await context.env.DB.prepare(`SELECT id, name FROM roles`).all<{ id: string; name: string }>();
   const validRoleNames = new Map(validRoleRows.results.map((r) => [r.name, r.id]));
 
-  for (const roleName of body.roles) {
+  for (const roleName of requestedRoles) {
     if (!validRoleNames.has(roleName)) {
       return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: `Unknown role: ${roleName}` } }, 422);
     }
   }
 
-  // Prevent removing super_admin if this is the only active super_admin
+  const currentRoles = await context.env.DB.prepare(`SELECT r.name FROM roles r JOIN user_roles ur ON ur.role_id=r.id WHERE ur.user_id=?`)
+    .bind(targetId).all<{ name: string }>();
+  const currentNames = currentRoles.results.map((row) => row.name).sort();
+  if (currentNames.length === requestedRoles.length && currentNames.every((role, index) => role === [...requestedRoles].sort()[index])) {
+    return context.json({ ok: true, data: { roles: requestedRoles } });
+  }
+
+  // Prevent removing super_admin if this is the only active super_admin.
   const hasAdminNow = await context.env.DB.prepare(`SELECT 1 FROM user_roles ur JOIN users u ON u.id=ur.user_id WHERE ur.user_id=? AND ur.role_id='role_admin' AND u.status='active'`).bind(targetId).first();
-  if (hasAdminNow && !body.roles.includes('super_admin')) {
+  if (hasAdminNow && !requestedRoles.includes('super_admin')) {
     const totalAdmins = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM user_roles ur JOIN users u ON u.id=ur.user_id WHERE ur.role_id='role_admin' AND u.status='active' AND u.archived_at IS NULL`).first<{ count: number }>();
     if ((totalAdmins?.count ?? 0) <= 1) {
       return context.json({ ok: false, error: { code: 'LAST_ADMIN_PROTECTED', message: 'Cannot remove the last super-admin' } }, 409);
@@ -288,14 +337,21 @@ userRoutes.patch('/:id/roles', requirePermission('workspace.admin'), async (cont
   const statements = [
     context.env.DB.prepare(`DELETE FROM user_roles WHERE user_id=?`).bind(targetId),
   ];
-  for (const roleName of body.roles) {
+  for (const roleName of requestedRoles) {
     const roleId = validRoleNames.get(roleName)!;
     statements.push(context.env.DB.prepare(`INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)`).bind(targetId, roleId));
   }
-  statements.push(audit(context.env, context.get('user').id, 'user.roles_updated', 'user', targetId, { roles: body.roles }));
+  statements.push(audit(context.env, context.get('user').id, 'user.roles_updated', 'user', targetId, { roles: requestedRoles }));
 
-  await context.env.DB.batch(statements);
-  return context.json({ ok: true, data: { roles: body.roles } });
+  try {
+    await context.env.DB.batch(statements);
+  } catch (error) {
+    if (/LAST_ADMIN/i.test(error instanceof Error ? error.message : String(error))) {
+      return context.json({ ok: false, error: { code: 'LAST_ADMIN_PROTECTED', message: 'Cannot remove the last super-admin' } }, 409);
+    }
+    throw error;
+  }
+  return context.json({ ok: true, data: { roles: requestedRoles } });
 });
 
 userRoutes.get('/roadmaps/all', async (context) => {

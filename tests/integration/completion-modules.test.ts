@@ -195,6 +195,39 @@ describe('completed workspace modules', () => {
     expect(reviewerList.map((row) => row.id)).toContain('attachment_submission_access');
   });
 
+  it('applies wiki visibility to attachment listing and downloads', async () => {
+    const page = await call(admin, '/api/v1/workspace/wiki', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Admin attachment notes',
+        slug: 'admin-attachment-notes',
+        category: 'Testing',
+        contentMarkdown: '# Admin-only evidence',
+        visibility: 'admin',
+      }),
+    });
+    expect(page.status).toBe(201);
+    const pageId = (await readData<{ id: string }>(page)).id;
+
+    const form = new FormData();
+    form.append('file', new File(['admin-only attachment payload'], 'admin-notes.txt', { type: 'text/plain' }));
+    form.append('resourceType', 'wiki');
+    form.append('resourceId', pageId);
+    form.append('label', 'Admin-only attachment');
+    const upload = await call(admin, '/api/v1/attachments', { method: 'POST', body: form });
+    expect(upload.status).toBe(201);
+    const attachmentId = (await readData<{ id: string }>(upload)).id;
+
+    expect((await call(member, `/api/v1/attachments?resourceType=wiki&resourceId=${pageId}`)).status).toBe(403);
+    expect((await call(supervisor, `/api/v1/attachments?resourceType=wiki&resourceId=${pageId}`)).status).toBe(403);
+    expect((await call(member, `/api/v1/attachments/${attachmentId}/download`)).status).toBe(403);
+
+    const adminList = await readData<Array<{ id: string }>>(
+      await call(admin, `/api/v1/attachments?resourceType=wiki&resourceId=${pageId}`),
+    );
+    expect(adminList.map((row) => row.id)).toContain(attachmentId);
+  });
+
   it('accepts password recovery requests without leaking account existence', async () => {
     const known = await call(null, '/api/v1/auth/request-password-reset', {
       method: 'POST',

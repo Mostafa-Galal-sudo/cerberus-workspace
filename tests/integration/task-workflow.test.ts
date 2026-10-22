@@ -6,6 +6,7 @@ import {
   MEMBER_EMAIL,
   MEMBER_ID,
   MEMBER_TWO_EMAIL,
+  SUPERVISOR_ID,
   call,
   completeChecklist,
   createTask,
@@ -92,6 +93,104 @@ describe('task submission and review workflow', () => {
 
     const notification = await databaseValue<{ count: number }>(`SELECT COUNT(*) AS count FROM notifications WHERE user_id=? AND type='review.approved'`, MEMBER_ID);
     expect(notification?.count).toBeGreaterThan(0);
+  });
+
+  it('prevents duplicate, post-approval and unsafe status transitions', async () => {
+    const taskId = await createTask(admin, { assigneeId: MEMBER_ID, title: 'Workflow guard task' });
+    await completeChecklist(member, taskId);
+
+    const first = await call(member, `/api/v1/tasks/${taskId}/submissions`, {
+      method: 'POST',
+      body: JSON.stringify(taskSubmission(1)),
+    });
+    expect(first.status).toBe(201);
+    const submissionId = (await readData<{ id: string }>(first)).id;
+
+    const duplicate = await call(member, `/api/v1/tasks/${taskId}/submissions`, {
+      method: 'POST',
+      body: JSON.stringify(taskSubmission(1)),
+    });
+    expect(duplicate.status).toBe(409);
+    expect((await readBody(duplicate)).error?.code).toBe('SUBMISSION_PENDING');
+
+    const invalidTransition = await call(member, `/api/v1/tasks/${taskId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'in_progress' }),
+    });
+    expect(invalidTransition.status).toBe(409);
+    expect((await readBody(invalidTransition)).error?.code).toBe('REVIEW_DECISION_REQUIRED');
+
+    expect((await reviewSubmission(admin, submissionId, 'approved', 'Workflow guard evidence verified.')).status).toBe(200);
+
+    const afterApproval = await call(member, `/api/v1/tasks/${taskId}/submissions`, {
+      method: 'POST',
+      body: JSON.stringify(taskSubmission(1)),
+    });
+    expect(afterApproval.status).toBe(409);
+    expect((await readBody(afterApproval)).error?.code).toBe('TASK_ALREADY_APPROVED');
+
+    const archiveStatus = await call(admin, `/api/v1/tasks/${taskId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'archived' }),
+    });
+    expect(archiveStatus.status).toBe(409);
+    expect((await readBody(archiveStatus)).error?.code).toBe('ARCHIVE_ENDPOINT_REQUIRED');
+
+    const activeTask = await createTask(admin, { assigneeId: MEMBER_ID, title: 'Allowed transition task' });
+    const active = await call(member, `/api/v1/tasks/${activeTask}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'in_progress' }),
+    });
+    expect(active.status).toBe(200);
+    const regression = await call(member, `/api/v1/tasks/${activeTask}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'changes_requested' }),
+    });
+    expect(regression.status).toBe(409);
+    expect((await readBody(regression)).error?.code).toBe('INVALID_TRANSITION');
+  });
+
+  it('rejects ineligible task assignees', async () => {
+    const create = await call(admin, '/api/v1/tasks', {
+      method: 'POST',
+      body: JSON.stringify({
+        projectId: 'project_cerberus',
+        assigneeId: SUPERVISOR_ID,
+        title: 'Supervisor assignment task',
+        description: 'A task must not be assigned to a read-only supervisor account.',
+        acceptanceCriteria: 'Only active accounts with task.work can be assigned tasks.',
+        validationProcedure: 'Attempt the assignment through the API and verify a validation error.',
+        evidenceRequirements: 'The API response status and error code.',
+      }),
+    });
+    expect(create.status).toBe(422);
+    expect((await readBody(create)).error?.code).toBe('INVALID_ASSIGNEE');
+
+    const taskId = await createTask(admin, { assigneeId: MEMBER_ID, title: 'Assignee validation task' });
+    const patch = await call(admin, `/api/v1/tasks/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ assigneeId: SUPERVISOR_ID }),
+    });
+    expect(patch.status).toBe(422);
+    expect((await readBody(patch)).error?.code).toBe('INVALID_ASSIGNEE');
+  });
+
+  it('serializes concurrent review decisions', async () => {
+    const taskId = await createTask(admin, { assigneeId: MEMBER_ID, title: 'Concurrent review task' });
+    await completeChecklist(member, taskId);
+    const submission = await call(member, `/api/v1/tasks/${taskId}/submissions`, {
+      method: 'POST',
+      body: JSON.stringify(taskSubmission(1)),
+    });
+    const submissionId = (await readData<{ id: string }>(submission)).id;
+
+    const decisions = await Promise.all([
+      reviewSubmission(admin, submissionId, 'approved', 'Concurrent approval decision.'),
+      reviewSubmission(admin, submissionId, 'changes_requested', 'Concurrent change request.'),
+    ]);
+    expect(decisions.map((decision) => decision.status).sort()).toEqual([200, 409]);
+    const reviews = await env.DB.prepare(`SELECT COUNT(*) AS count FROM reviews WHERE submission_id=?`).bind(submissionId).first<{ count: number }>();
+    expect(reviews?.count).toBe(1);
   });
 
   it('forbids administrative approval of your own submission', async () => {

@@ -1,12 +1,20 @@
 import { Hono } from 'hono';
 import { requireAuth, requirePasswordChanged } from '../middleware/auth';
 import { requestProviderReply } from '../services/ai';
+import { consumeRateLimit } from '../services/rate-limit';
+import { wikiVisibilityFilter } from '../services/wiki-access';
 import type { Env, Variables } from '../types';
 
 export const assistantRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 assistantRoutes.use('*', requireAuth, requirePasswordChanged);
+const MAX_PROMPT_CHARACTERS = 8_000;
+const MAX_REPLY_CHARACTERS = 20_000;
 
 assistantRoutes.get('/usage', async (context) => {
+  const user = context.get('user');
+  if (!user.permissions.includes('workspace.admin') && !user.roles.includes('project_supervisor')) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Usage telemetry is restricted to administrators and supervisors' } }, 403);
+  }
   const rows = await context.env.DB.prepare(`SELECT a.*, u.display_name AS userName
     FROM assistant_usage a
     JOIN users u ON u.id = a.user_id
@@ -21,17 +29,25 @@ assistantRoutes.post('/chat', async (context) => {
   if (!message) {
     return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Message prompt required' } }, 422);
   }
+  if (message.length > MAX_PROMPT_CHARACTERS) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: `Prompts are limited to ${MAX_PROMPT_CHARACTERS} characters` } }, 422);
+  }
 
   const user = context.get('user');
+  if (!await consumeRateLimit(context.env, `assistant:${user.id}`, 20, 900)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many assistant requests. Try again later.' } }, 429);
+  }
 
-  // Pull active workspace context (tasks, wiki, blockers, decisions)
+  // Pull active workspace context (tasks, wiki, blockers, decisions) subject to the caller's visibility.
+  const wikiAccess = wikiVisibilityFilter(user);
+  const wikiCondition = wikiAccess.sql ? `AND ${wikiAccess.sql}` : '';
   const [tasks, wiki, blockers, decisions, members] = await Promise.all([
     context.env.DB.prepare(`SELECT t.id, t.title, t.priority, t.status, u.display_name AS assignee
       FROM tasks t LEFT JOIN users u ON u.id = t.assignee_id
       WHERE t.archived_at IS NULL LIMIT 25`).all<{ id: string; title: string; priority: string; status: string; assignee: string }>(),
     context.env.DB.prepare(`SELECT p.title, p.category, substr(v.content_markdown, 1, 200) AS excerpt
       FROM wiki_pages p JOIN wiki_versions v ON v.page_id = p.id AND v.version = p.current_version
-      WHERE p.archived_at IS NULL LIMIT 15`).all<{ title: string; category: string; excerpt: string }>(),
+      WHERE p.archived_at IS NULL ${wikiCondition} LIMIT 15`).bind(...wikiAccess.binds).all<{ title: string; category: string; excerpt: string }>(),
     context.env.DB.prepare(`SELECT title, severity, status FROM blockers WHERE status='open' LIMIT 10`).all<{ title: string; severity: string; status: string }>(),
     context.env.DB.prepare(`SELECT title, status, reasoning FROM decisions WHERE archived_at IS NULL LIMIT 10`).all<{ title: string; status: string; reasoning: string }>(),
     context.env.DB.prepare(`SELECT display_name AS name, specialization FROM users WHERE archived_at IS NULL`).all<{ name: string; specialization: string }>(),
@@ -106,6 +122,8 @@ assistantRoutes.post('/chat', async (context) => {
       `\n\nLet me know if you would like me to inspect a specific task checklist, audit evidence requirements, or compile a progress report.`;
     }
   }
+
+  if (reply.length > MAX_REPLY_CHARACTERS) reply = `${reply.slice(0, MAX_REPLY_CHARACTERS)}\n\n[Response truncated]`;
 
   // Record usage telemetry in assistant_usage
   const usageId = crypto.randomUUID();

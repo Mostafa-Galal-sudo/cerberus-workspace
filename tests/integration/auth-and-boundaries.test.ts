@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import app from '../../worker/index';
 import {
   ADMIN_EMAIL,
   CHANGED_PASSWORD,
@@ -7,6 +8,7 @@ import {
   SUPERVISOR_EMAIL,
   TEMP_EMAIL,
   TEST_PASSWORD,
+  bindings,
   call,
   createTask,
   login,
@@ -34,6 +36,49 @@ describe('authentication, CSRF and role boundaries', () => {
     const payload = await readBody<{ csrfToken: string; mustChangePassword: boolean }>(response);
     expect(payload.data.csrfToken).toMatch(/^[A-Za-z0-9_-]{32,}$/);
     expect(payload.data.mustChangePassword).toBe(false);
+  });
+
+  it('rejects the development cookie name and unsafe origins in production', async () => {
+    const session = await login(MEMBER_EMAIL);
+    const productionBindings = { ...bindings, APP_ENV: 'production', APP_ORIGIN: 'https://cerberus.example' };
+
+    const fallback = await app.request('/api/v1/auth/me', { headers: { cookie: session.cookie } }, productionBindings);
+    expect(fallback.status).toBe(401);
+
+    const crossOrigin = await app.request('/api/v1/auth/me', {
+      headers: { cookie: session.cookie, Origin: 'https://evil.example' },
+    }, productionBindings);
+    expect(crossOrigin.status).toBe(403);
+    expect((await readBody(crossOrigin)).error?.code).toBe('ORIGIN_DENIED');
+
+    const unconfigured = await app.request('/api/v1/health', {}, {
+      ...bindings,
+      APP_ENV: 'production',
+      APP_ORIGIN: undefined,
+    });
+    expect(unconfigured.status).toBe(503);
+    expect((await readBody(unconfigured)).error?.code).toBe('ORIGIN_NOT_CONFIGURED');
+
+    const health = await app.request('/api/v1/health', {}, productionBindings);
+    expect(health.status).toBe(200);
+    expect(health.headers.get('cache-control')).toBe('no-store');
+    expect((await readBody<{ service: string; environment?: string }>(health)).data.environment).toBeUndefined();
+  });
+
+  it('rate-limits repeated failed logins for the same account', async () => {
+    const email = `missing-${Date.now()}@cerberus.test`;
+    let lastStatus = 0;
+    let lastCode: string | undefined;
+    for (let attempt = 0; attempt < 9; attempt += 1) {
+      const response = await call(null, '/api/v1/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email, password: 'WrongPassword!2026' }),
+      });
+      lastStatus = response.status;
+      lastCode = (await readBody(response)).error?.code;
+    }
+    expect(lastStatus).toBe(429);
+    expect(lastCode).toBe('RATE_LIMITED');
   });
 
   it('rejects unauthenticated access and mutations without the CSRF token', async () => {

@@ -66,13 +66,16 @@ describe('server-generated CSV reports', () => {
   });
 
   it('exports roadmap progress with computed completion values', async () => {
-    const response = await call(memberTwo, '/api/v1/reports/progress.csv');
+    const response = await call(admin, '/api/v1/reports/progress.csv');
     expect(response.status).toBe(200);
     const csv = await response.text();
     expect(csv.startsWith('member,email,specialization,domain,total_tasks,approved_tasks,total_checkpoints,approved_checkpoints,task_progress_percent\r\n')).toBe(true);
     expect(csv).toContain('Member One');
     expect(csv).toContain('Member Two');
     expect(csv).toContain(',0\r\n');
+
+    const denied = await call(memberTwo, '/api/v1/reports/progress.csv');
+    expect(denied.status).toBe(403);
   });
 
   it('exports hardware inventory with holder state and blockers with escaped text', async () => {
@@ -100,5 +103,8 @@ describe('server-generated CSV reports', () => {
       .bind(MEMBER_ID).first<{ filters_json: string }>();
     expect(scoped).toBeDefined();
     expect(JSON.parse(scoped!.filters_json)).toMatchObject({ assigneeId: MEMBER_ID });
+
+    const auditRows = await env.DB.prepare(`SELECT COUNT(*) AS count FROM audit_logs WHERE action='report.exported'`).first<{ count: number }>();
+    expect(auditRows?.count ?? 0).toBeGreaterThanOrEqual(6);
   });
 });

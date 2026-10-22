@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { Env, Variables } from '../types';
-import { hashPassword, randomToken } from '../services/security';
+import { hashPassword, randomToken, timingSafeCompare } from '../services/security';
 
 const members = [
   { id: 'user_mostafa', email: 'mostafa@cerberus.local', name: 'Mostafa Galal', specialization: 'Embedded Systems, IoT Security & Technical Integration', roles: ['role_admin', 'role_member', 'role_technical_lead'] },
@@ -24,7 +24,8 @@ const roadmaps = [
 export const setupRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 setupRoutes.post('/initialize', async (context) => {
-  if (!context.env.SETUP_TOKEN || context.req.header('Authorization') !== `Bearer ${context.env.SETUP_TOKEN}`) {
+  const authorization = context.req.header('Authorization') ?? '';
+  if (!context.env.SETUP_TOKEN || !timingSafeCompare(authorization, `Bearer ${context.env.SETUP_TOKEN}`)) {
     return context.json({ ok: false, error: { code: 'SETUP_FORBIDDEN', message: 'Valid setup token required' } }, 403);
   }
   const existing = await context.env.DB.prepare('SELECT COUNT(*) AS count FROM users').first<{ count: number }>();

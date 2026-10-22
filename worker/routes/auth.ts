@@ -6,14 +6,21 @@ import { requireAuth } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { emailDeliveryConfigured, sendEmail } from '../services/email';
 import { workspaceEventStatements } from '../services/events';
+import { consumeRateLimit, markRateLimitSuccess } from '../services/rate-limit';
 import { hashPassword, randomToken, sha256, verifyPassword } from '../services/security';
 
 export const authRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 const sessionSeconds = 60 * 60 * 24 * 7;
+// A valid PBKDF2 hash keeps the no-user path as expensive as the real-user path.
+const DUMMY_PASSWORD_HASH = 'pbkdf2-sha256$100000$GxUgEgupczPrnl8R78IeIg$fy45VTnCF9opHyHlARXYRJ2J_PYqqACqanWT25LsZIk';
 
 authRoutes.post('/activate', async (context) => {
   const parsed = activationSchema.safeParse(await context.req.json().catch(() => null));
   if (!parsed.success) return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid activation details', fields: parsed.error.flatten().fieldErrors } }, 422);
+  const address = context.req.header('CF-Connecting-IP') ?? 'local';
+  if (!await consumeRateLimit(context.env, `activate:${address}`, 20, 900)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many activation attempts. Try again later.' } }, 429);
+  }
   const tokenHash = await sha256(parsed.data.token);
   const invitation = await context.env.DB.prepare(`SELECT i.id, i.user_id, u.status FROM invitations i JOIN users u ON u.id = i.user_id
     WHERE i.token_hash = ? AND i.accepted_at IS NULL AND i.expires_at > unixepoch()`).bind(tokenHash).first<{ id: string; user_id: string; status: string }>();
@@ -31,13 +38,20 @@ authRoutes.post('/login', async (context) => {
   const parsed = loginSchema.safeParse(await context.req.json().catch(() => null));
   if (!parsed.success) return context.json({ ok: false, error: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' } }, 401);
   const address = context.req.header('CF-Connecting-IP') ?? 'local';
-  const rateKey = await sha256(`${address}:${parsed.data.email.toLowerCase()}`);
-  const recent = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM login_attempts WHERE key_hash = ? AND succeeded = 0 AND attempted_at > unixepoch() - 900`)
-    .bind(rateKey).first<{ count: number }>();
-  if ((recent?.count ?? 0) >= 8) return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' } }, 429);
-  const user = await context.env.DB.prepare(`SELECT id, password_hash, status, must_change_password FROM users WHERE email = ? COLLATE NOCASE`).bind(parsed.data.email).first<{ id: string; password_hash: string | null; status: string; must_change_password: number }>();
-  const valid = Boolean(user?.password_hash && user.status === 'active' && await verifyPassword(parsed.data.password, user.password_hash));
-  await context.env.DB.prepare(`INSERT INTO login_attempts (key_hash, succeeded) VALUES (?, ?)` ).bind(rateKey, valid ? 1 : 0).run();
+  if (!await consumeRateLimit(context.env, `login-ip:${address}`, 200, 900)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' } }, 429);
+  }
+  const rateKey = `login:${address}:${parsed.data.email.toLowerCase()}`;
+  if (!await consumeRateLimit(context.env, rateKey, 8, 900, true)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' } }, 429);
+  }
+  const user = await context.env.DB.prepare(`SELECT id, password_hash, status, must_change_password, archived_at
+    FROM users WHERE email = ? COLLATE NOCASE`).bind(parsed.data.email).first<{
+      id: string; password_hash: string | null; status: string; must_change_password: number; archived_at: number | null;
+    }>();
+  const passwordMatches = await verifyPassword(parsed.data.password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
+  const valid = Boolean(user && user.archived_at === null && user.status === 'active' && user.password_hash && passwordMatches);
+  if (valid) await markRateLimitSuccess(context.env, rateKey);
   if (!valid || !user) return context.json({ ok: false, error: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' } }, 401);
   return createSession(context, user.id, user.must_change_password === 1, 200);
 });
@@ -49,13 +63,12 @@ authRoutes.post('/request-password-reset', async (context) => {
   }
 
   const address = context.req.header('CF-Connecting-IP') ?? 'local';
-  const rateKey = await sha256(`reset-request:${address}`);
-  const recent = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM login_attempts WHERE key_hash=? AND attempted_at > unixepoch() - 900`)
-    .bind(rateKey).first<{ count: number }>();
-  if ((recent?.count ?? 0) >= 5) {
+  if (!await consumeRateLimit(context.env, `reset-request-ip:${address}`, 30, 900)) {
     return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many recovery requests. Try again later.' } }, 429);
   }
-  await context.env.DB.prepare(`INSERT INTO login_attempts (key_hash, succeeded) VALUES (?, 0)`).bind(rateKey).run();
+  if (!await consumeRateLimit(context.env, `reset-request:${address}:${parsed.data.email.toLowerCase()}`, 5, 900)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many recovery requests. Try again later.' } }, 429);
+  }
 
   const deliveryConfigured = emailDeliveryConfigured(context.env);
   let delivery: 'email' | 'administrator' = deliveryConfigured ? 'email' : 'administrator';
@@ -118,10 +131,10 @@ authRoutes.post('/reset-password', async (context) => {
   }
 
   const address = context.req.header('CF-Connecting-IP') ?? 'local';
-  const rateKey = await sha256(`reset:${address}`);
-  const recent = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM login_attempts WHERE key_hash = ? AND succeeded = 0 AND attempted_at > unixepoch() - 900`)
-    .bind(rateKey).first<{ count: number }>();
-  if ((recent?.count ?? 0) >= 10) return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many reset attempts. Try again later.' } }, 429);
+  const rateKey = `reset:${address}`;
+  if (!await consumeRateLimit(context.env, rateKey, 20, 900, true)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many reset attempts. Try again later.' } }, 429);
+  }
 
   const tokenHash = await sha256(parsed.data.token);
   const reset = await context.env.DB.prepare(`SELECT pr.id, pr.user_id, u.status
@@ -129,7 +142,7 @@ authRoutes.post('/reset-password', async (context) => {
     WHERE pr.token_hash = ? AND pr.used_at IS NULL AND pr.expires_at > unixepoch()`)
     .bind(tokenHash).first<{ id: string; user_id: string; status: string }>();
   const valid = Boolean(reset && reset.status === 'active');
-  await context.env.DB.prepare(`INSERT INTO login_attempts (key_hash, succeeded) VALUES (?, ?)`).bind(rateKey, valid ? 1 : 0).run();
+  if (valid) await markRateLimitSuccess(context.env, rateKey);
   if (!valid || !reset) return context.json({ ok: false, error: { code: 'RESET_TOKEN_INVALID', message: 'This reset link is invalid, expired, or already used' } }, 400);
 
   const passwordHash = await hashPassword(parsed.data.password);
@@ -175,8 +188,11 @@ authRoutes.post('/logout', async (context) => {
     context.env.DB.prepare(`UPDATE sessions SET revoked_at = unixepoch() WHERE id = ?`).bind(context.get('sessionId')),
     audit(context.env, context.get('user').id, 'session.logout', 'session', context.get('sessionId')),
   ]);
-  const production = new URL(context.req.url).protocol === 'https:';
-  deleteCookie(context, production ? '__Host-cerberus_session' : 'cerberus_session', {
+  const production = context.env.APP_ENV === 'production';
+  deleteCookie(context, '__Host-cerberus_session', {
+    path: '/', secure: true, httpOnly: true, sameSite: 'Strict',
+  });
+  deleteCookie(context, 'cerberus_session', {
     path: '/', secure: production, httpOnly: true, sameSite: 'Strict',
   });
   return context.json({ ok: true, data: null });
@@ -193,7 +209,7 @@ async function createSession(context: Context<{ Bindings: Env; Variables: Variab
     context.env.DB.prepare(`UPDATE users SET last_activity_at = unixepoch() WHERE id = ?`).bind(userId),
     audit(context.env, userId, 'session.created', 'session', sessionId),
   ]);
-  const production = new URL(context.req.url).protocol === 'https:';
+  const production = context.env.APP_ENV === 'production';
   setCookie(context, production ? '__Host-cerberus_session' : 'cerberus_session', token, {
     httpOnly: true, secure: production, sameSite: 'Strict', path: '/', maxAge: sessionSeconds,
   });

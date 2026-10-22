@@ -118,6 +118,30 @@ describe('users, dashboard, invitations and notifications', () => {
     expect(adminEdit.status).toBe(200);
   });
 
+  it('limits private directory fields to the owner, administrators and supervisors', async () => {
+    const memberList = await readData<Array<{ id: string; email: string; bio: string | null; lastActivityAt: number | null }>>(
+      await call(member, '/api/v1/users'),
+    );
+    const other = memberList.find((row) => row.id === MEMBER_TWO_ID);
+    expect(other?.email).toBe('');
+    expect(other?.bio).toBeNull();
+    expect(other?.lastActivityAt).toBeNull();
+    const self = memberList.find((row) => row.id === MEMBER_ID);
+    expect(self?.email).toBe(MEMBER_EMAIL);
+
+    const adminList = await readData<Array<{ id: string; email: string }>>(await call(admin, '/api/v1/users'));
+    expect(adminList.find((row) => row.id === MEMBER_TWO_ID)?.email).toBe(MEMBER_TWO_EMAIL);
+
+    const memberDetail = await readData<{ email: string; bio: string | null; permissions: string[] }>(
+      await call(member, `/api/v1/users/${MEMBER_TWO_ID}`),
+    );
+    expect(memberDetail.email).toBe('');
+    expect(memberDetail.bio).toBeNull();
+    expect(memberDetail.permissions).toEqual([]);
+    const supervisorDetail = await readData<{ email: string }>(await call(supervisor, `/api/v1/users/${MEMBER_TWO_ID}`));
+    expect(supervisorDetail.email).toBe(MEMBER_TWO_EMAIL);
+  });
+
   it('prevents an administrator from suspending their own account', async () => {
     const response = await call(admin, `/api/v1/users/${ADMIN_ID}/status`, {
       method: 'PATCH',

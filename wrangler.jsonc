@@ -23,5 +23,8 @@
     "APP_ENV": "production",
     "APP_ORIGIN": "https://cerberus-workspace.mosthistory139.workers.dev"
   },
+  "triggers": {
+    "crons": ["17 3 * * *"]
+  },
   "observability": { "enabled": true }
 }

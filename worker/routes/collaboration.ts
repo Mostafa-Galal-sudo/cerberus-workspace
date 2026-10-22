@@ -4,7 +4,9 @@ import { announcementSchema, messageSchema } from '../../shared/schemas/workspac
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { listWorkspaceEvents, workspaceEventStatements } from '../services/events';
-import type { Env, Variables } from '../types';
+import { consumeRateLimit } from '../services/rate-limit';
+import { isSupervisor } from '../services/wiki-access';
+import type { AuthUser, Env, Variables } from '../types';
 
 export const collaborationRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 collaborationRoutes.use('*', requireAuth, requirePasswordChanged);
@@ -67,6 +69,7 @@ collaborationRoutes.get('/channels', async (context) => {
 });
 
 collaborationRoutes.post('/channels/direct', async (context) => {
+  if (isSupervisor(context.get('user'))) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Supervisor accounts are read-only' } }, 403);
   const body = await context.req.json<{ userId?: string }>().catch(() => ({} as { userId?: string }));
   if (!body.userId || body.userId === context.get('user').id) return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Choose another workspace member' } }, 422);
   const existing = await context.env.DB.prepare(`SELECT c.id FROM channels c
@@ -75,7 +78,7 @@ collaborationRoutes.post('/channels/direct', async (context) => {
     WHERE c.type='direct' AND (SELECT COUNT(*) FROM channel_members x WHERE x.channel_id=c.id)=2 LIMIT 1`)
     .bind(context.get('user').id, body.userId).first<{ id: string }>();
   if (existing) return context.json({ ok: true, data: existing });
-  const target = await context.env.DB.prepare(`SELECT display_name FROM users WHERE id=? AND status='active'`).bind(body.userId).first<{ display_name: string }>();
+  const target = await context.env.DB.prepare(`SELECT display_name FROM users WHERE id=? AND status='active' AND archived_at IS NULL`).bind(body.userId).first<{ display_name: string }>();
   if (!target) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Member not found' } }, 404);
   const id = crypto.randomUUID();
   await context.env.DB.batch([
@@ -97,6 +100,11 @@ collaborationRoutes.get('/channels/:id/messages', async (context) => {
 });
 
 collaborationRoutes.post('/channels/:id/messages', async (context) => {
+  const user = context.get('user');
+  if (isSupervisor(user)) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Supervisor accounts are read-only' } }, 403);
+  if (!await consumeRateLimit(context.env, `message:${user.id}`, 60, 60)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many messages. Slow down and retry.' } }, 429);
+  }
   const parsed = messageSchema.safeParse(await context.req.json().catch(() => null));
   if (!parsed.success) return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Message cannot be empty' } }, 422);
   const channelId = context.req.param('id');
@@ -120,6 +128,7 @@ collaborationRoutes.post('/channels/:id/messages', async (context) => {
 });
 
 collaborationRoutes.patch('/messages/:id', async (context) => {
+  if (isSupervisor(context.get('user'))) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Supervisor accounts are read-only' } }, 403);
   const parsed = messageSchema.pick({ body: true }).safeParse(await context.req.json().catch(() => null));
   if (!parsed.success) return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Message cannot be empty' } }, 422);
   const message = await context.env.DB.prepare(`SELECT id, channel_id FROM messages WHERE id=? AND author_id=? AND deleted_at IS NULL`)
@@ -140,6 +149,7 @@ collaborationRoutes.patch('/messages/:id', async (context) => {
 
 collaborationRoutes.delete('/messages/:id', async (context) => {
   const user = context.get('user');
+  if (isSupervisor(user)) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Supervisor accounts are read-only' } }, 403);
   const message = await context.env.DB.prepare(`SELECT id, channel_id, author_id FROM messages WHERE id=? AND deleted_at IS NULL`)
     .bind(context.req.param('id')).first<{ id: string; channel_id: string; author_id: string }>();
   if (!message || (message.author_id !== user.id && !user.roles.includes('super_admin'))) {
@@ -168,10 +178,11 @@ collaborationRoutes.post('/channels/:id/read', async (context) => {
 
 collaborationRoutes.get('/announcements', async (context) => {
   const user = context.get('user');
-  const audience = user.roles.includes('super_admin') ? ['all','admins'] : user.roles.includes('project_supervisor') ? ['all','supervisors'] : ['all','members'];
+  const audience = announcementAudiences(user);
+  const placeholders = audience.map(() => '?').join(',');
   const rows = await context.env.DB.prepare(`SELECT a.*,u.display_name AS authorName,ar.read_at AS readAt FROM announcements a
     JOIN users u ON u.id=a.author_id LEFT JOIN announcement_reads ar ON ar.announcement_id=a.id AND ar.user_id=?
-    WHERE a.archived_at IS NULL AND a.published_at IS NOT NULL AND (a.expires_at IS NULL OR a.expires_at>unixepoch()) AND a.audience IN (?,?)
+    WHERE a.archived_at IS NULL AND a.published_at IS NOT NULL AND (a.expires_at IS NULL OR a.expires_at>unixepoch()) AND a.audience IN (${placeholders})
     ORDER BY a.published_at DESC LIMIT 100`).bind(user.id, ...audience).all();
   return context.json({ ok: true, data: rows.results });
 });
@@ -205,7 +216,15 @@ collaborationRoutes.post('/announcements', requirePermission('workspace.admin'),
 });
 
 collaborationRoutes.post('/announcements/:id/read', async (context) => {
-  await context.env.DB.prepare(`INSERT OR REPLACE INTO announcement_reads (announcement_id,user_id) VALUES (?,?)`).bind(context.req.param('id'),context.get('user').id).run();
+  const user = context.get('user');
+  const audience = announcementAudiences(user);
+  const placeholders = audience.map(() => '?').join(',');
+  const announcement = await context.env.DB.prepare(`SELECT id FROM announcements
+    WHERE id=? AND archived_at IS NULL AND published_at IS NOT NULL
+      AND (expires_at IS NULL OR expires_at>unixepoch()) AND audience IN (${placeholders})`)
+    .bind(context.req.param('id'), ...audience).first();
+  if (!announcement) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Announcement not found' } }, 404);
+  await context.env.DB.prepare(`INSERT OR REPLACE INTO announcement_reads (announcement_id,user_id) VALUES (?,?)`).bind(context.req.param('id'),user.id).run();
   return context.json({ ok: true, data: null });
 });
 
@@ -220,4 +239,12 @@ collaborationRoutes.post('/notifications/:id/read', async (context) => {
 
 async function channelAllowed(db: D1Database, channelId: string, userId: string) {
   return Boolean(await db.prepare(`SELECT 1 FROM channel_members WHERE channel_id=? AND user_id=?`).bind(channelId,userId).first());
+}
+
+function announcementAudiences(user: Pick<AuthUser, 'roles' | 'permissions'>): string[] {
+  const audiences = new Set(['all']);
+  if (user.permissions.includes('workspace.admin') || user.roles.includes('super_admin')) audiences.add('admins');
+  if (user.roles.includes('project_supervisor')) audiences.add('supervisors');
+  if (user.permissions.includes('task.work') || user.roles.includes('team_member') || user.roles.includes('technical_lead')) audiences.add('members');
+  return [...audiences];
 }

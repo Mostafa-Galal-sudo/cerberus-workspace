@@ -1,14 +1,50 @@
 import { Hono } from 'hono';
+import { safeHttpUrl } from '../../shared/url';
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { createPullRequest, extractTaskIds, githubAuthMode, GithubApiError, syncRepository } from '../services/github';
+import { consumeRateLimit } from '../services/rate-limit';
 import { verifyGithubSignature } from '../services/security';
 import type { Env, Variables } from '../types';
 
 export const githubRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-const repositoryPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const branchPattern = /^[A-Za-z0-9._/-]{1,120}$/;
+const MAX_WEBHOOK_BYTES = 1024 * 1024;
+const MAX_TASK_REFERENCE_LENGTH = 120;
+
+function validRepository(value: string): boolean {
+  const parts = value.split('/');
+  if (parts.length !== 2) return false;
+  const [owner, repository] = parts;
+  if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(owner)) return false;
+  if (!/^[A-Za-z0-9._-]{1,100}$/.test(repository)) return false;
+  return repository !== '.' && repository !== '..' && !repository.includes('..');
+}
+
+function validBranch(value: string): boolean {
+  return /^[A-Za-z0-9._/-]{1,120}$/.test(value)
+    && !value.includes('..')
+    && !value.startsWith('/') && !value.endsWith('/')
+    && !value.startsWith('-') && !value.endsWith('.lock');
+}
+
+function validTaskReference(value: string): boolean {
+  return /^task_[A-Za-z0-9_-]{1,100}$/.test(value) && value.length <= MAX_TASK_REFERENCE_LENGTH;
+}
+
+function parseGithubConfig(raw: string | undefined): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw ?? '{}');
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+function configString(config: Record<string, unknown>, key: string): string | undefined {
+  const value = config[key];
+  return typeof value === 'string' ? value : undefined;
+}
 
 function githubErrorResult(error: unknown): { status: 502 | 503; body: { ok: false; error: { code: string; message: string } } } {
   if (error instanceof GithubApiError) {
@@ -32,70 +68,114 @@ function githubErrorResult(error: unknown): { status: 502 | 503; body: { ok: fal
   };
 }
 
-// Webhook receiver (unauthenticated because GitHub calls it, but HMAC signature verified!)
+// Webhook receiver (unauthenticated because GitHub calls it, but it fails closed
+// unless the integration is enabled and an HMAC secret is configured.)
 githubRoutes.post('/webhook', async (context) => {
-  const deliveryId = context.req.header('X-GitHub-Delivery') ?? crypto.randomUUID();
-  const eventType = context.req.header('X-GitHub-Event') ?? 'ping';
-  const signature = context.req.header('X-Hub-Signature-256');
-
-  const rawBody = await context.req.text();
-
-  // Retrieve GitHub integration settings
-  const settings = await context.env.DB.prepare(`SELECT enabled, config_json FROM integration_settings WHERE integration = 'github'`).first<{ enabled: number; config_json: string }>();
-  const config = JSON.parse(settings?.config_json ?? '{}') as { webhookSecret?: string; repository?: string };
-
-  // If a webhook secret is configured, verify HMAC-SHA256 signature
-  if (config.webhookSecret) {
-    if (!signature || !signature.startsWith('sha256=')) {
-      return context.json({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Missing or malformed X-Hub-Signature-256' } }, 401);
-    }
-    if (!await verifyGithubSignature(config.webhookSecret, rawBody, signature)) {
-      return context.json({ ok: false, error: { code: 'SIGNATURE_MISMATCH', message: 'Invalid HMAC signature' } }, 401);
-    }
+  const address = context.req.header('CF-Connecting-IP') ?? 'local';
+  if (!await consumeRateLimit(context.env, `github-webhook:${address}`, 120, 60)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many webhook deliveries' } }, 429);
+  }
+  const declaredLength = Number(context.req.header('content-length') ?? '0');
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_WEBHOOK_BYTES) {
+    return context.json({ ok: false, error: { code: 'PAYLOAD_TOO_LARGE', message: 'Webhook payload is too large' } }, 413);
   }
 
-  // Parse payload
-  let payload: Record<string, unknown> = {};
+  const deliveryId = (context.req.header('X-GitHub-Delivery') ?? crypto.randomUUID()).slice(0, 120);
+  const eventType = (context.req.header('X-GitHub-Event') ?? 'ping').slice(0, 80);
+  const signature = context.req.header('X-Hub-Signature-256');
+  const rawBody = await context.req.text();
+  if (new TextEncoder().encode(rawBody).byteLength > MAX_WEBHOOK_BYTES) {
+    return context.json({ ok: false, error: { code: 'PAYLOAD_TOO_LARGE', message: 'Webhook payload is too large' } }, 413);
+  }
+
+  const settings = await context.env.DB.prepare(`SELECT enabled, config_json FROM integration_settings WHERE integration = 'github'`)
+    .first<{ enabled: number; config_json: string }>();
+  const config = parseGithubConfig(settings?.config_json);
+  if (!settings?.enabled) {
+    return context.json({ ok: false, error: { code: 'INTEGRATION_DISABLED', message: 'GitHub integration is disabled' } }, 503);
+  }
+  const configuredSecret = configString(config, 'webhookSecret');
+  const secret = configuredSecret || context.env.GITHUB_WEBHOOK_SECRET;
+  if (!secret) {
+    return context.json({ ok: false, error: { code: 'WEBHOOK_NOT_CONFIGURED', message: 'A webhook secret must be configured before deliveries are accepted' } }, 503);
+  }
+  if (!signature || !await verifyGithubSignature(secret, rawBody, signature)) {
+    return context.json({ ok: false, error: { code: 'SIGNATURE_MISMATCH', message: 'Invalid or missing HMAC signature' } }, 401);
+  }
+
+  let parsed: unknown;
   try {
-    payload = JSON.parse(rawBody) as Record<string, unknown>;
+    parsed = JSON.parse(rawBody);
   } catch {
     return context.json({ ok: false, error: { code: 'INVALID_PAYLOAD', message: 'Invalid JSON payload' } }, 400);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return context.json({ ok: false, error: { code: 'INVALID_PAYLOAD', message: 'Invalid JSON payload' } }, 400);
+  }
+  const payload = parsed as Record<string, unknown>;
+
+  const deliveredRepository = typeof payload.repository === 'object' && payload.repository !== null && !Array.isArray(payload.repository)
+    ? configString(payload.repository as Record<string, unknown>, 'full_name')
+    : undefined;
+  const configuredRepository = configString(config, 'repository');
+  if (configuredRepository && deliveredRepository && deliveredRepository.toLowerCase() !== configuredRepository.toLowerCase()) {
+    return context.json({ ok: false, error: { code: 'REPOSITORY_MISMATCH', message: 'Webhook repository does not match the configured integration' } }, 403);
+  }
+
+  const existingDelivery = await context.env.DB.prepare(`SELECT 1 FROM github_events WHERE delivery_id=?`).bind(deliveryId).first();
+  if (existingDelivery) {
+    return context.json({ ok: true, data: { received: true, deliveryId, eventType, duplicate: true } });
   }
 
   const eventId = crypto.randomUUID();
   const statements: D1PreparedStatement[] = [
     context.env.DB.prepare(`INSERT INTO github_events (id, delivery_id, event_type, action, payload_json, processed_at)
       VALUES (?, ?, ?, ?, ?, unixepoch())`)
-      .bind(eventId, deliveryId, eventType, typeof payload.action === 'string' ? payload.action : null, rawBody),
+      .bind(eventId, deliveryId, eventType, typeof payload.action === 'string' ? payload.action.slice(0, 80) : null, rawBody),
+    audit(context.env, null, 'github.webhook_received', 'github_event', eventId, { deliveryId, eventType }),
   ];
 
-  // If push event with commits, extract any task references and link
   if (eventType === 'push' && Array.isArray(payload.commits)) {
-    for (const commit of payload.commits as Array<{ id: string; message: string; url: string }>) {
-      const taskMatches = commit.message.match(/task_[a-zA-Z0-9_-]+/g);
-      if (taskMatches) {
-        for (const taskId of taskMatches) {
-          statements.push(context.env.DB.prepare(`INSERT OR IGNORE INTO github_links (id, project_id, resource_type, resource_id, github_type, github_id, url)
-            VALUES (?, 'project_cerberus', 'task', ?, 'commit', ?, ?)`).bind(crypto.randomUUID(), taskId, commit.id, commit.url));
-        }
-      }
-    }
-  }
-
-  // If pull_request event, link PR to task if mentioned in title or body
-  if (eventType === 'pull_request' && payload.pull_request) {
-    const pr = payload.pull_request as { id: number; html_url: string; title: string; body?: string };
-    const text = `${pr.title} ${pr.body ?? ''}`;
-    const taskMatches = text.match(/task_[a-zA-Z0-9_-]+/g);
-    if (taskMatches) {
-      for (const taskId of taskMatches) {
+    for (const rawCommit of payload.commits.slice(0, 50)) {
+      if (typeof rawCommit !== 'object' || rawCommit === null) continue;
+      const commit = rawCommit as Record<string, unknown>;
+      const message = typeof commit.message === 'string' ? commit.message : '';
+      const commitId = typeof commit.id === 'string' ? commit.id.slice(0, 120) : '';
+      const commitUrl = safeHttpUrl(commit.url);
+      if (!commitId || !commitUrl) continue;
+      for (const taskId of extractTaskIds(message).filter(validTaskReference)) {
         statements.push(context.env.DB.prepare(`INSERT OR IGNORE INTO github_links (id, project_id, resource_type, resource_id, github_type, github_id, url)
-          VALUES (?, 'project_cerberus', 'task', ?, 'pull_request', ?, ?)`).bind(crypto.randomUUID(), taskId, String(pr.id), pr.html_url));
+          SELECT ?, 'project_cerberus', 'task', ?, 'commit', ?, ?
+          WHERE EXISTS (SELECT 1 FROM tasks WHERE id=? AND archived_at IS NULL)`)
+          .bind(crypto.randomUUID(), taskId, commitId, commitUrl, taskId));
       }
     }
   }
 
-  await context.env.DB.batch(statements);
+  if (eventType === 'pull_request' && typeof payload.pull_request === 'object' && payload.pull_request !== null) {
+    const pr = payload.pull_request as Record<string, unknown>;
+    const title = typeof pr.title === 'string' ? pr.title : '';
+    const body = typeof pr.body === 'string' ? pr.body : '';
+    const pullRequestUrl = safeHttpUrl(pr.html_url);
+    const pullRequestId = typeof pr.id === 'number' || typeof pr.id === 'string' ? String(pr.id).slice(0, 120) : '';
+    if (pullRequestUrl && pullRequestId) {
+      for (const taskId of extractTaskIds(`${title} ${body}`).filter(validTaskReference)) {
+        statements.push(context.env.DB.prepare(`INSERT OR IGNORE INTO github_links (id, project_id, resource_type, resource_id, github_type, github_id, url)
+          SELECT ?, 'project_cerberus', 'task', ?, 'pull_request', ?, ?
+          WHERE EXISTS (SELECT 1 FROM tasks WHERE id=? AND archived_at IS NULL)`)
+          .bind(crypto.randomUUID(), taskId, pullRequestId, pullRequestUrl, taskId));
+      }
+    }
+  }
+
+  try {
+    await context.env.DB.batch(statements);
+  } catch (error) {
+    if (/UNIQUE constraint failed: github_events\.delivery_id/i.test(error instanceof Error ? error.message : String(error))) {
+      return context.json({ ok: true, data: { received: true, deliveryId, eventType, duplicate: true } });
+    }
+    throw error;
+  }
   return context.json({ ok: true, data: { received: true, deliveryId, eventType } });
 });
 
@@ -113,28 +193,21 @@ githubRoutes.get('/status', async (context) => {
       ORDER BY gl.created_at DESC LIMIT 30`).all(),
   ]);
 
-  const config = JSON.parse(settings?.config_json ?? '{}') as {
-    repository?: string;
-    webhookSecret?: string;
-    syncBranch?: string;
-    lastSyncAt?: number;
-    lastSyncStatus?: string;
-    lastSyncCount?: number;
-  };
+  const config = parseGithubConfig(settings?.config_json);
   const authMode = githubAuthMode(context.env);
 
   return context.json({
     ok: true,
     data: {
       enabled: Boolean(settings?.enabled),
-      repository: config.repository ?? 'Mostafa-Galal-sudo/cerberus-firmware',
-      syncBranch: config.syncBranch ?? 'main',
-      hasSecret: Boolean(config.webhookSecret),
+      repository: configString(config, 'repository') ?? 'Mostafa-Galal-sudo/cerberus-firmware',
+      syncBranch: configString(config, 'syncBranch') ?? 'main',
+      hasSecret: Boolean(configString(config, 'webhookSecret') || context.env.GITHUB_WEBHOOK_SECRET),
       authMode,
       outboundReady: authMode !== 'none',
-      lastSyncAt: config.lastSyncAt ?? null,
-      lastSyncStatus: config.lastSyncStatus ?? null,
-      lastSyncCount: config.lastSyncCount ?? 0,
+      lastSyncAt: typeof config.lastSyncAt === 'number' ? config.lastSyncAt : null,
+      lastSyncStatus: typeof config.lastSyncStatus === 'string' ? config.lastSyncStatus : null,
+      lastSyncCount: typeof config.lastSyncCount === 'number' ? config.lastSyncCount : 0,
       updatedAt: settings?.updatedAt,
       events: events.results,
       links: links.results,
@@ -146,14 +219,17 @@ githubRoutes.post('/settings', requirePermission('workspace.admin'), async (cont
   const body = await context.req.json<{ enabled?: boolean; repository?: string; webhookSecret?: string; syncBranch?: string }>().catch(() => ({} as { enabled?: boolean; repository?: string; webhookSecret?: string; syncBranch?: string }));
   const repository = body.repository?.trim();
   const syncBranch = body.syncBranch?.trim();
-  if (repository && !repositoryPattern.test(repository)) {
-    return context.json({ ok: false, error: { code: 'INVALID_REPOSITORY', message: 'Repository must use the owner/name form' } }, 422);
+  if (repository && !validRepository(repository)) {
+    return context.json({ ok: false, error: { code: 'INVALID_REPOSITORY', message: 'Repository must use a valid owner/name form' } }, 422);
   }
-  if (syncBranch && !branchPattern.test(syncBranch)) {
+  if (syncBranch && !validBranch(syncBranch)) {
     return context.json({ ok: false, error: { code: 'INVALID_BRANCH', message: 'Branch name contains unsupported characters' } }, 422);
   }
+  if (body.webhookSecret !== undefined && (typeof body.webhookSecret !== 'string' || body.webhookSecret.length > 256)) {
+    return context.json({ ok: false, error: { code: 'INVALID_SECRET', message: 'Webhook secret must be a string of at most 256 characters' } }, 422);
+  }
   const existing = await context.env.DB.prepare(`SELECT config_json FROM integration_settings WHERE integration = 'github'`).first<{ config_json: string }>();
-  const currentConfig = JSON.parse(existing?.config_json ?? '{}') as Record<string, unknown>;
+  const currentConfig = parseGithubConfig(existing?.config_json);
 
   const nextConfig = {
     ...currentConfig,
@@ -178,20 +254,21 @@ githubRoutes.post('/settings', requirePermission('workspace.admin'), async (cont
 githubRoutes.post('/sync', requirePermission('workspace.admin'), async (context) => {
   const settings = await context.env.DB.prepare(`SELECT enabled, config_json FROM integration_settings WHERE integration='github'`)
     .first<{ enabled: number; config_json: string }>();
-  const config = JSON.parse(settings?.config_json ?? '{}') as {
-    repository?: string;
-    webhookSecret?: string;
-    syncBranch?: string;
-    lastSyncAt?: number;
-    lastSyncStatus?: string;
-    lastSyncCount?: number;
+  const storedConfig = parseGithubConfig(settings?.config_json);
+  const config = {
+    repository: configString(storedConfig, 'repository'),
+    webhookSecret: configString(storedConfig, 'webhookSecret'),
+    syncBranch: configString(storedConfig, 'syncBranch'),
+    lastSyncAt: typeof storedConfig.lastSyncAt === 'number' ? storedConfig.lastSyncAt : undefined,
+    lastSyncStatus: configString(storedConfig, 'lastSyncStatus'),
+    lastSyncCount: typeof storedConfig.lastSyncCount === 'number' ? storedConfig.lastSyncCount : undefined,
   };
 
   if (!config.repository) {
     return context.json({ ok: false, error: { code: 'REPOSITORY_NOT_CONFIGURED', message: 'Save a GitHub repository before syncing' } }, 409);
   }
-  if (!repositoryPattern.test(config.repository)) {
-    return context.json({ ok: false, error: { code: 'INVALID_REPOSITORY', message: 'Repository must use the owner/name form' } }, 422);
+  if (!validRepository(config.repository)) {
+    return context.json({ ok: false, error: { code: 'INVALID_REPOSITORY', message: 'Repository must use a valid owner/name form' } }, 422);
   }
   if (githubAuthMode(context.env) === 'none') {
     return context.json({ ok: false, error: { code: 'GITHUB_NOT_CONFIGURED', message: 'Configure GITHUB_TOKEN or GitHub App credentials before syncing' } }, 503);
@@ -202,13 +279,16 @@ githubRoutes.post('/sync', requirePermission('workspace.admin'), async (context)
     const statements: D1PreparedStatement[] = [];
     let linked = 0;
     for (const pullRequest of result.pullRequests) {
-      const taskIds = extractTaskIds(`${pullRequest.title} ${pullRequest.body ?? ''}`);
+      const pullRequestUrl = safeHttpUrl(pullRequest.html_url);
+      if (!pullRequestUrl) continue;
+      const taskIds = extractTaskIds(`${pullRequest.title} ${pullRequest.body ?? ''}`).filter(validTaskReference);
       for (const taskId of taskIds) {
         linked += 1;
         statements.push(context.env.DB.prepare(`INSERT OR IGNORE INTO github_links
           (id, project_id, resource_type, resource_id, github_type, github_id, url)
-          VALUES (?, 'project_cerberus', 'task', ?, 'pull_request', ?, ?)`)
-          .bind(crypto.randomUUID(), taskId, String(pullRequest.number), pullRequest.html_url));
+          SELECT ?, 'project_cerberus', 'task', ?, 'pull_request', ?, ?
+          WHERE EXISTS (SELECT 1 FROM tasks WHERE id=? AND archived_at IS NULL)`)
+          .bind(crypto.randomUUID(), taskId, String(pullRequest.number).slice(0, 120), pullRequestUrl, taskId));
       }
     }
 
@@ -271,10 +351,16 @@ githubRoutes.post('/pull-request', requirePermission('workspace.admin'), async (
   if (!taskId || !title || !head) {
     return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'taskId, title and head branch are required' } }, 422);
   }
+  if (!validTaskReference(taskId)) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'taskId is invalid' } }, 422);
+  }
   if (title.length < 3 || title.length > 180) {
     return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Pull request title must be 3-180 characters' } }, 422);
   }
-  if (!branchPattern.test(head) || (body.base && !branchPattern.test(body.base))) {
+  if ((body.body?.trim().length ?? 0) > 10_000) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Pull request body must be 10,000 characters or fewer' } }, 422);
+  }
+  if (!validBranch(head) || (body.base && !validBranch(body.base.trim()))) {
     return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Branch names contain unsupported characters' } }, 422);
   }
 
@@ -284,19 +370,23 @@ githubRoutes.post('/pull-request', requirePermission('workspace.admin'), async (
 
   const settings = await context.env.DB.prepare(`SELECT config_json FROM integration_settings WHERE integration='github'`)
     .first<{ config_json: string }>();
-  const config = JSON.parse(settings?.config_json ?? '{}') as { repository?: string; syncBranch?: string };
+  const storedConfig = parseGithubConfig(settings?.config_json);
+  const config = {
+    repository: configString(storedConfig, 'repository'),
+    syncBranch: configString(storedConfig, 'syncBranch'),
+  };
   if (!config.repository) {
     return context.json({ ok: false, error: { code: 'REPOSITORY_NOT_CONFIGURED', message: 'Save a GitHub repository before opening pull requests' } }, 409);
   }
-  if (!repositoryPattern.test(config.repository)) {
-    return context.json({ ok: false, error: { code: 'INVALID_REPOSITORY', message: 'Repository must use the owner/name form' } }, 422);
+  if (!validRepository(config.repository)) {
+    return context.json({ ok: false, error: { code: 'INVALID_REPOSITORY', message: 'Repository must use a valid owner/name form' } }, 422);
   }
   if (githubAuthMode(context.env) === 'none') {
     return context.json({ ok: false, error: { code: 'GITHUB_NOT_CONFIGURED', message: 'Configure GITHUB_TOKEN or GitHub App credentials before opening pull requests' } }, 503);
   }
 
   const base = body.base?.trim() || config.syncBranch || 'main';
-  if (!branchPattern.test(base)) {
+  if (!validBranch(base)) {
     return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Base branch contains unsupported characters' } }, 422);
   }
   const description = `${body.body?.trim() ?? ''}${body.body?.trim() ? '\n\n' : ''}Linked task: ${taskId}`;
@@ -310,20 +400,24 @@ githubRoutes.post('/pull-request', requirePermission('workspace.admin'), async (
       body: description,
       draft: Boolean(body.draft),
     });
+    const pullRequestUrl = safeHttpUrl(pullRequest.html_url);
+    if (!pullRequestUrl) {
+      return context.json({ ok: false, error: { code: 'GITHUB_API_ERROR', message: 'GitHub returned an invalid pull request URL' } }, 502);
+    }
 
     await context.env.DB.batch([
       context.env.DB.prepare(`INSERT OR IGNORE INTO github_links
         (id, project_id, resource_type, resource_id, github_type, github_id, url)
         VALUES (?, 'project_cerberus', 'task', ?, 'pull_request', ?, ?)`)
-        .bind(crypto.randomUUID(), taskId, String(pullRequest.number), pullRequest.html_url),
+        .bind(crypto.randomUUID(), taskId, String(pullRequest.number).slice(0, 120), pullRequestUrl),
       context.env.DB.prepare(`INSERT INTO github_events (id, delivery_id, event_type, action, payload_json, processed_at)
         VALUES (?, ?, 'pull_request', 'opened_outbound', ?, unixepoch())`)
         .bind(crypto.randomUUID(), `out_${crypto.randomUUID()}`,
-          JSON.stringify({ repository: config.repository, taskId, number: pullRequest.number, url: pullRequest.html_url })),
+          JSON.stringify({ repository: config.repository, taskId, number: pullRequest.number, url: pullRequestUrl })),
       audit(context.env, context.get('user').id, 'github.pull_request_created', 'task', taskId, {
         repository: config.repository,
         number: pullRequest.number,
-        url: pullRequest.html_url,
+        url: pullRequestUrl,
       }),
     ]);
 
@@ -331,7 +425,7 @@ githubRoutes.post('/pull-request', requirePermission('workspace.admin'), async (
       ok: true,
       data: {
         number: pullRequest.number,
-        url: pullRequest.html_url,
+        url: pullRequestUrl,
         title: pullRequest.title,
         state: pullRequest.state,
         taskId,
@@ -345,10 +439,15 @@ githubRoutes.post('/pull-request', requirePermission('workspace.admin'), async (
 
 githubRoutes.post('/simulate-event', requirePermission('workspace.admin'), async (context) => {
   const body = await context.req.json<{ eventType?: string; taskId?: string; commitMessage?: string }>().catch(() => ({} as { eventType?: string; taskId?: string; commitMessage?: string }));
-  const eventType = body.eventType ?? 'push';
-  const taskId = body.taskId ?? 'task_1_1';
+  const eventType = body.eventType === 'pull_request' ? 'pull_request' : 'push';
+  const taskId = (body.taskId ?? 'task_1_1').trim();
+  if (!validTaskReference(taskId)) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'taskId is invalid' } }, 422);
+  }
+  const task = await context.env.DB.prepare(`SELECT id FROM tasks WHERE id=? AND archived_at IS NULL`).bind(taskId).first();
+  if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
   const commitSha = crypto.randomUUID().replaceAll('-', '').slice(0, 7);
-  const commitMessage = body.commitMessage ?? `feat(firmware): implement SPI telemetry transceiver for ${taskId}`;
+  const commitMessage = (body.commitMessage ?? `feat(firmware): implement SPI telemetry transceiver for ${taskId}`).slice(0, 2_000);
   const commitUrl = `https://github.com/Mostafa-Galal-sudo/cerberus-firmware/commit/${commitSha}`;
 
   const eventPayload = {

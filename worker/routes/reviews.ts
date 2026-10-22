@@ -135,6 +135,13 @@ reviewRoutes.post('/:id', async (context) => {
     payload: { submissionId: submission.id, taskId: submission.task_id, checkpointId: submission.checkpoint_id, targetType },
   }));
 
-  await context.env.DB.batch(statements);
+  try {
+    await context.env.DB.batch(statements);
+  } catch (error) {
+    if (/UNIQUE constraint failed/i.test(error instanceof Error ? error.message : String(error))) {
+      return context.json({ ok: false, error: { code: 'ALREADY_REVIEWED', message: 'This submission already has a decision' } }, 409);
+    }
+    throw error;
+  }
   return context.json({ ok: true, data: { reviewId, result: parsed.data.result, targetType } });
 });

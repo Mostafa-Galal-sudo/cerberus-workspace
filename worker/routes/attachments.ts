@@ -1,7 +1,10 @@
 import { Hono } from 'hono';
+import { safeHttpUrl } from '../../shared/url';
 import { requireAuth, requirePasswordChanged } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { workspaceEventStatements } from '../services/events';
+import { consumeRateLimit } from '../services/rate-limit';
+import { canEditWiki, canViewWiki, isSupervisor } from '../services/wiki-access';
 import type { AuthUser, Env, Variables } from '../types';
 
 const MAX_BYTES = 10 * 1024 * 1024;
@@ -20,13 +23,19 @@ function asciiFilename(name: string): string {
 }
 
 async function canView(db: D1Database, user: AuthUser, resourceType: string, resourceId: string): Promise<boolean> {
-  if (resourceType !== 'submission') return true;
-  const row = await db.prepare(`SELECT submitted_by FROM submissions WHERE id=?`).bind(resourceId).first<{ submitted_by: string }>();
-  return Boolean(row) && (row!.submitted_by === user.id || user.permissions.includes('review.admin') || user.permissions.includes('workspace.admin'));
+  if (resourceType === 'submission') {
+    const row = await db.prepare(`SELECT submitted_by FROM submissions WHERE id=?`).bind(resourceId).first<{ submitted_by: string }>();
+    return Boolean(row) && (row!.submitted_by === user.id || user.permissions.includes('review.admin') || user.permissions.includes('workspace.admin'));
+  }
+  if (resourceType === 'wiki') {
+    const row = await db.prepare(`SELECT visibility FROM wiki_pages WHERE id=? AND archived_at IS NULL`).bind(resourceId).first<{ visibility: string }>();
+    return Boolean(row) && canViewWiki(user, row!.visibility);
+  }
+  return true;
 }
 
 async function canAttach(db: D1Database, user: AuthUser, resourceType: string, resourceId: string): Promise<boolean> {
-  if (user.roles.includes('project_supervisor')) return false;
+  if (isSupervisor(user)) return false;
 
   if (resourceType === 'task') {
     const row = await db.prepare(`SELECT assignee_id FROM tasks WHERE id=? AND archived_at IS NULL`).bind(resourceId).first<{ assignee_id: string | null }>();
@@ -50,8 +59,8 @@ async function canAttach(db: D1Database, user: AuthUser, resourceType: string, r
     return Boolean(row) && (row!.owner_id === user.id || user.permissions.includes('workspace.admin'));
   }
   if (resourceType === 'wiki') {
-    const row = await db.prepare(`SELECT id FROM wiki_pages WHERE id=? AND archived_at IS NULL`).bind(resourceId).first();
-    return Boolean(row);
+    const row = await db.prepare(`SELECT visibility FROM wiki_pages WHERE id=? AND archived_at IS NULL`).bind(resourceId).first<{ visibility: string }>();
+    return Boolean(row) && canEditWiki(user, row!.visibility);
   }
   return false;
 }
@@ -73,12 +82,30 @@ attachmentRoutes.get('/', async (context) => {
     WHERE a.resource_type=? AND a.resource_id=? AND a.archived_at IS NULL
     ORDER BY a.created_at DESC`).bind(resourceType, resourceId).all();
 
-  return context.json({ ok: true, data: rows.results });
+  return context.json({
+    ok: true,
+    data: rows.results.map((row) => {
+      const record = row as Record<string, unknown>;
+      const url = typeof record.url === 'string' ? record.url : '';
+      return {
+        ...record,
+        url: url.startsWith('/api/v1/attachments/') || safeHttpUrl(url) ? url : '',
+      };
+    }),
+  });
 });
 
 attachmentRoutes.post('/', async (context) => {
   if (!context.env.ATTACHMENTS) {
     return context.json({ ok: false, error: { code: 'ATTACHMENTS_UNAVAILABLE', message: 'Object storage is not configured for this deployment' } }, 503);
+  }
+  const user = context.get('user');
+  if (!await consumeRateLimit(context.env, `attachment-upload:${user.id}`, 30, 900)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many uploads. Try again later.' } }, 429);
+  }
+  const contentLength = Number(context.req.header('content-length') ?? '0');
+  if (Number.isFinite(contentLength) && contentLength > MAX_BYTES + 2 * 1024 * 1024) {
+    return context.json({ ok: false, error: { code: 'FILE_TOO_LARGE', message: 'Evidence files must be 10 MB or smaller' } }, 413);
   }
 
   let form: FormData;
@@ -153,7 +180,9 @@ attachmentRoutes.get('/:id/download', async (context) => {
   }
 
   if (row.storageType !== 'r2') {
-    return context.redirect(row.url, 302);
+    const target = safeHttpUrl(row.url);
+    if (!target) return context.json({ ok: false, error: { code: 'INVALID_ATTACHMENT_URL', message: 'This attachment link is not a safe web address' } }, 400);
+    return context.redirect(target, 302);
   }
   if (!context.env.ATTACHMENTS || !row.publicId) {
     return context.json({ ok: false, error: { code: 'ATTACHMENTS_UNAVAILABLE', message: 'Object storage is not configured for this deployment' } }, 503);
@@ -176,6 +205,9 @@ attachmentRoutes.get('/:id/download', async (context) => {
 });
 
 attachmentRoutes.delete('/:id', async (context) => {
+  if (isSupervisor(context.get('user'))) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Supervisor accounts are read-only' } }, 403);
+  }
   const row = await context.env.DB.prepare(`SELECT id, owner_id AS ownerId, storage_type AS storageType, public_id AS publicId,
       resource_type AS resourceType, resource_id AS resourceId
     FROM attachments WHERE id=? AND archived_at IS NULL`).bind(context.req.param('id')).first<{

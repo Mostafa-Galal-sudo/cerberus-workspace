@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import { requireAuth, requirePasswordChanged } from '../middleware/auth';
+import { requireAuth, requirePasswordChanged, requireRole } from '../middleware/auth';
+import { audit } from '../services/audit';
 import { csvHeaders, toCsv } from '../services/csv';
 import { renderReportPdf } from '../services/pdf';
 import type { Env, Variables } from '../types';
@@ -11,9 +12,15 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
+const teamReportAccess = requireRole('super_admin', 'project_supervisor');
+
 async function recordExport(env: Env, userId: string, reportType: string, filters: Record<string, unknown>) {
-  await env.DB.prepare(`INSERT INTO report_exports (id, requested_by, report_type, filters_json) VALUES (?, ?, ?, ?)`)
-    .bind(crypto.randomUUID(), userId, reportType, JSON.stringify(filters)).run();
+  const exportId = crypto.randomUUID();
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO report_exports (id, requested_by, report_type, filters_json) VALUES (?, ?, ?, ?)`)
+      .bind(exportId, userId, reportType, JSON.stringify(filters)),
+    audit(env, userId, 'report.exported', 'report_export', exportId, { reportType, filters }),
+  ]);
 }
 
 function pdfHeaders(filename: string): HeadersInit {
@@ -54,7 +61,7 @@ reportRoutes.get('/tasks.csv', async (context) => {
   return new Response(csv, { status: 200, headers: csvHeaders(`cerberus-tasks-${today()}.csv`) });
 });
 
-reportRoutes.get('/progress.csv', async (context) => {
+reportRoutes.get('/progress.csv', teamReportAccess, async (context) => {
   const user = context.get('user');
   const rows = await context.env.DB.prepare(`SELECT u.display_name AS member, u.email, u.specialization,
       COALESCE(d.name, '') AS domain,
@@ -85,7 +92,7 @@ reportRoutes.get('/progress.csv', async (context) => {
   return new Response(csv, { status: 200, headers: csvHeaders(`cerberus-progress-${today()}.csv`) });
 });
 
-reportRoutes.get('/hardware.csv', async (context) => {
+reportRoutes.get('/hardware.csv', teamReportAccess, async (context) => {
   const user = context.get('user');
   const rows = await context.env.DB.prepare(`SELECT h.id, h.name, h.model, h.serial_number, h.quantity, h.condition,
       h.purchase_status, h.unit_cost,
@@ -107,7 +114,8 @@ reportRoutes.get('/hardware.csv', async (context) => {
   return new Response(csv, { status: 200, headers: csvHeaders(`cerberus-hardware-${today()}.csv`) });
 });
 
-reportRoutes.get('/blockers.csv', async (context) => {  const user = context.get('user');
+reportRoutes.get('/blockers.csv', teamReportAccess, async (context) => {
+  const user = context.get('user');
   const rows = await context.env.DB.prepare(`SELECT b.id, b.title, b.severity, b.status, b.description, b.resolution_notes,
       u.display_name AS reporter,
       datetime(b.created_at, 'unixepoch') AS created_utc,
@@ -127,7 +135,7 @@ reportRoutes.get('/blockers.csv', async (context) => {  const user = context.get
   return new Response(csv, { status: 200, headers: csvHeaders(`cerberus-blockers-${today()}.csv`) });
 });
 
-reportRoutes.get('/progress.pdf', async (context) => {
+reportRoutes.get('/progress.pdf', teamReportAccess, async (context) => {
   const user = context.get('user');
   const rows = await context.env.DB.prepare(`SELECT u.display_name AS member, u.email, u.specialization,
       COALESCE(d.name, '') AS domain,
@@ -180,7 +188,7 @@ reportRoutes.get('/progress.pdf', async (context) => {
   return new Response(pdf as unknown as BodyInit, { status: 200, headers: pdfHeaders(`cerberus-progress-${today()}.pdf`) });
 });
 
-reportRoutes.get('/hardware.pdf', async (context) => {
+reportRoutes.get('/hardware.pdf', teamReportAccess, async (context) => {
   const user = context.get('user');
   const rows = await context.env.DB.prepare(`SELECT h.name, h.model, h.serial_number, h.quantity, h.condition,
       h.purchase_status, h.unit_cost,
@@ -224,7 +232,7 @@ reportRoutes.get('/hardware.pdf', async (context) => {
   return new Response(pdf as unknown as BodyInit, { status: 200, headers: pdfHeaders(`cerberus-hardware-${today()}.pdf`) });
 });
 
-reportRoutes.get('/blockers.pdf', async (context) => {
+reportRoutes.get('/blockers.pdf', teamReportAccess, async (context) => {
   const user = context.get('user');
   const rows = await context.env.DB.prepare(`SELECT b.title, b.severity, b.status, b.description, b.resolution_notes,
       u.display_name AS reporter,

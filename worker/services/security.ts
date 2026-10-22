@@ -24,13 +24,19 @@ export async function verifyPassword(password: string, stored: string): Promise<
   const [algorithm, iterationText, saltText, expectedText] = stored.split('$');
   if (algorithm !== 'pbkdf2-sha256' || !iterationText || !saltText || !expectedText) return false;
   const iterations = Number(iterationText);
-  if (!Number.isSafeInteger(iterations) || iterations < 100_000) return false;
-  const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const salt = fromBase64url(saltText);
-  const actual = new Uint8Array(await crypto.subtle.deriveBits({
-    name: 'PBKDF2', hash: 'SHA-256', salt: salt.buffer as ArrayBuffer, iterations,
-  }, material, 256));
-  return constantTimeEqual(actual, fromBase64url(expectedText));
+  if (!Number.isSafeInteger(iterations) || iterations < 100_000 || iterations > 1_000_000) return false;
+  try {
+    const salt = fromBase64url(saltText);
+    const expected = fromBase64url(expectedText);
+    if (salt.length !== 16 || expected.length !== 32) return false;
+    const material = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
+    const actual = new Uint8Array(await crypto.subtle.deriveBits({
+      name: 'PBKDF2', hash: 'SHA-256', salt: salt.buffer as ArrayBuffer, iterations,
+    }, material, 256));
+    return constantTimeEqual(actual, expected);
+  } catch {
+    return false;
+  }
 }
 
 export async function computeHmacSha256(keyText: string, messageText: string): Promise<string> {
@@ -40,9 +46,11 @@ export async function computeHmacSha256(keyText: string, messageText: string): P
 }
 
 export function timingSafeCompare(left: string, right: string): boolean {
-  if (left.length !== right.length) return false;
-  let mismatch = 0;
-  for (let index = 0; index < left.length; index += 1) mismatch |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  let mismatch = left.length ^ right.length;
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    mismatch |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
+  }
   return mismatch === 0;
 }
 

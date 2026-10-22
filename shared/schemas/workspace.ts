@@ -1,6 +1,8 @@
 import { z } from 'zod';
+import { isSafeHttpUrl } from '../url';
 
 export const idSchema = z.string().min(1).max(120);
+const httpUrlSchema = z.string().trim().max(2048).refine(isSafeHttpUrl, 'Use an http(s) URL');
 export const messageSchema = z.object({ body: z.string().trim().min(1).max(8_000), parentId: idSchema.nullable().optional() });
 export const announcementSchema = z.object({
   title: z.string().trim().min(3).max(180), body: z.string().trim().min(3).max(10_000),
@@ -18,6 +20,10 @@ export const wikiSchema = z.object({
   visibility: z.enum(['members', 'supervisor', 'admin']).default('members'), changeSummary: z.string().max(500).default(''),
   parentId: idSchema.nullable().optional(),
 });
+export const wikiVersionSchema = z.object({
+  contentMarkdown: z.string().max(100_000).refine((value) => value.trim().length > 0, 'Markdown content is required'),
+  changeSummary: z.string().max(500).default(''),
+});
 export const decisionSchema = z.object({
   title: z.string().trim().min(3).max(180), status: z.enum(['proposed', 'accepted', 'superseded']),
   reasoning: z.string().trim().min(10).max(20_000), alternatives: z.string().max(10_000).default(''),
@@ -33,7 +39,7 @@ export const hardwareSchema = z.object({
   quantity: z.number().int().min(1).max(100_000), unitCost: z.number().min(0).nullable().optional(),
   condition: z.enum(['new', 'good', 'fair', 'damaged', 'retired']).default('good'),
   purchaseStatus: z.enum(['requested', 'ordered', 'available', 'unavailable']).default('available'),
-  datasheetUrl: z.url().or(z.literal('')).default(''), notes: z.string().max(10_000).default(''),
+  datasheetUrl: httpUrlSchema.or(z.literal('')).default(''), notes: z.string().max(10_000).default(''),
 });
 export const experimentSchema = z.object({
   experimentCode: z.string().trim().min(2).max(80), title: z.string().trim().min(3).max(180),
@@ -45,7 +51,7 @@ export const feedbackSchema = z.object({ body: z.string().trim().min(3).max(10_0
 export const integrationSchema = z.object({ enabled: z.boolean(), config: z.record(z.string(), z.unknown()).default({}) });
 export const attachmentSchema = z.object({
   resourceType: z.string().min(1).max(80), resourceId: idSchema, label: z.string().min(1).max(180),
-  storageType: z.enum(['cloudinary', 'external_private_link']), url: z.url(), publicId: z.string().max(500).nullable().optional(),
+  storageType: z.enum(['cloudinary', 'external_private_link']), url: httpUrlSchema, publicId: z.string().max(500).nullable().optional(),
   mimeType: z.string().max(120).nullable().optional(), byteSize: z.number().int().nonnegative().nullable().optional(),
   visibility: z.enum(['members', 'supervisor', 'admin']).default('members'),
 });

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { createTaskSchema, submissionSchema, updateTaskStatusSchema } from '../../shared/schemas/tasks';
+import { createTaskSchema, submissionSchema, updateTaskSchema, updateTaskStatusSchema } from '../../shared/schemas/tasks';
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { workspaceEventStatements } from '../services/events';
@@ -7,6 +7,30 @@ import type { Env, Variables } from '../types';
 
 export const taskRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 taskRoutes.use('*', requireAuth, requirePasswordChanged);
+
+const assigneeTransitions: Record<string, readonly string[]> = {
+  backlog: ['in_progress', 'blocked'],
+  in_progress: ['backlog', 'blocked'],
+  blocked: ['backlog', 'in_progress'],
+  changes_requested: ['in_progress'],
+  ready_for_review: [],
+  approved: [],
+  archived: [],
+};
+
+async function eligibleAssignee(db: D1Database, userId: string): Promise<boolean> {
+  const row = await db.prepare(`SELECT 1 FROM users u
+    JOIN user_roles ur ON ur.user_id = u.id
+    JOIN role_permissions rp ON rp.role_id = ur.role_id
+    JOIN permissions p ON p.id = rp.permission_id
+    WHERE u.id = ? AND u.status = 'active' AND u.archived_at IS NULL AND p.name = 'task.work'
+    LIMIT 1`).bind(userId).first();
+  return Boolean(row);
+}
+
+function isUniqueConstraint(error: unknown): boolean {
+  return /UNIQUE constraint failed/i.test(error instanceof Error ? error.message : String(error));
+}
 
 taskRoutes.get('/checkpoints', async (context) => {
   const ownerId = context.req.query('ownerId');
@@ -70,6 +94,11 @@ taskRoutes.post('/checkpoints/:id/submissions', async (context) => {
   if (checkpoint.status === 'ready_for_review' || checkpoint.status === 'approved') {
     return context.json({ ok: false, error: { code: 'ALREADY_SUBMITTED', message: 'This checkpoint has already been submitted for review' } }, 409);
   }
+  const pendingSubmission = await context.env.DB.prepare(`SELECT 1 FROM submissions WHERE checkpoint_id=? AND status='pending' LIMIT 1`)
+    .bind(checkpointId).first();
+  if (pendingSubmission) {
+    return context.json({ ok: false, error: { code: 'SUBMISSION_PENDING', message: 'A checkpoint submission is already awaiting review' } }, 409);
+  }
 
   const user = context.get('user');
   if (!user.permissions.includes('task.work') && !user.permissions.includes('task.manage')) {
@@ -95,7 +124,7 @@ taskRoutes.post('/checkpoints/:id/submissions', async (context) => {
   const statements = [
     context.env.DB.prepare(`INSERT INTO submissions (id, checkpoint_id, submitted_by, summary, version)
       SELECT ?, ?, ?, ?, COALESCE(MAX(version),0)+1 FROM submissions WHERE checkpoint_id=?`).bind(submissionId, checkpointId, user.id, parsed.data.summary, checkpointId),
-    context.env.DB.prepare(`UPDATE checkpoints SET status='ready_for_review', updated_at=unixepoch() WHERE id=?`).bind(checkpointId),
+    context.env.DB.prepare(`UPDATE checkpoints SET status='ready_for_review', approved_at=NULL, updated_at=unixepoch() WHERE id=?`).bind(checkpointId),
     audit(context.env, user.id, 'checkpoint.submitted', 'submission', submissionId, { checkpointId }),
   ];
 
@@ -107,7 +136,14 @@ taskRoutes.post('/checkpoints/:id/submissions', async (context) => {
     SELECT lower(hex(randomblob(16))), user_id, 'review.requested', 'Checkpoint ready for review', ?, 'submission', ?
     FROM user_roles WHERE role_id='role_admin'`).bind(`Checkpoint ${checkpointId} submitted for review.`, submissionId));
 
-  await context.env.DB.batch(statements);
+  try {
+    await context.env.DB.batch(statements);
+  } catch (error) {
+    if (isUniqueConstraint(error)) {
+      return context.json({ ok: false, error: { code: 'SUBMISSION_CONFLICT', message: 'A concurrent checkpoint submission already exists' } }, 409);
+    }
+    throw error;
+  }
   return context.json({ ok: true, data: { id: submissionId } }, 201);
 });
 
@@ -174,34 +210,41 @@ taskRoutes.post('/', requirePermission('task.manage'), async (context) => {
 
   const id = `task_${crypto.randomUUID()}`;
   const input = parsed.data;
+  const assigneeId = input.assigneeId?.trim() || null;
+  const domainId = input.domainId?.trim() || null;
+  const parentTaskId = input.parentTaskId?.trim() || null;
+  const checkpointId = input.checkpointId?.trim() || null;
+  if (assigneeId && !await eligibleAssignee(context.env.DB, assigneeId)) {
+    return context.json({ ok: false, error: { code: 'INVALID_ASSIGNEE', message: 'Tasks can only be assigned to active working members' } }, 422);
+  }
   const statements = [
     context.env.DB.prepare(`INSERT INTO tasks
       (id, project_id, domain_id, assignee_id, parent_task_id, created_by, title, description, prerequisites, inputs,
        implementation_steps, required_tools, expected_outputs, deliverables, acceptance_criteria, validation_procedure,
        evidence_requirements, priority)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(id, input.projectId, input.domainId ?? null, input.assigneeId ?? null, input.parentTaskId ?? null,
+      .bind(id, input.projectId, domainId, assigneeId, parentTaskId,
         context.get('user').id, input.title, input.description, input.prerequisites, input.inputs, input.implementationSteps,
         input.requiredTools, input.expectedOutputs, input.deliverables, input.acceptanceCriteria, input.validationProcedure,
         input.evidenceRequirements, input.priority),
     context.env.DB.prepare(`INSERT INTO progress_events (id, project_id, user_id, event_type, resource_type, resource_id, total_delta, actor_id)
-      VALUES (?, ?, ?, 'task.created', 'task', ?, 1, ?)`).bind(crypto.randomUUID(), input.projectId, input.assigneeId ?? null, id, context.get('user').id),
+      VALUES (?, ?, ?, 'task.created', 'task', ?, 1, ?)`).bind(crypto.randomUUID(), input.projectId, assigneeId, id, context.get('user').id),
     audit(context.env, context.get('user').id, 'task.created', 'task', id),
   ];
 
-  if (input.assigneeId) {
+  if (assigneeId) {
     statements.push(context.env.DB.prepare(`INSERT INTO notifications (id, user_id, type, title, body, resource_type, resource_id)
       VALUES (?, ?, 'task.assigned', 'New task assigned', ?, 'task', ?)`)
-      .bind(crypto.randomUUID(), input.assigneeId, `You were assigned: ${input.title}`, id));
+      .bind(crypto.randomUUID(), assigneeId, `You were assigned: ${input.title}`, id));
     statements.push(...workspaceEventStatements(context.env, {
       type: 'task.assigned',
-      userIds: [input.assigneeId],
+      userIds: [assigneeId],
       payload: { taskId: id, title: input.title },
     }));
   }
 
-  if (input.checkpointId) {
-    statements.push(context.env.DB.prepare(`INSERT INTO checkpoint_tasks (checkpoint_id, task_id) VALUES (?, ?)`).bind(input.checkpointId, id));
+  if (checkpointId) {
+    statements.push(context.env.DB.prepare(`INSERT INTO checkpoint_tasks (checkpoint_id, task_id) VALUES (?, ?)`).bind(checkpointId, id));
   }
 
   // Seed standard checklist items
@@ -218,8 +261,12 @@ taskRoutes.patch('/:id', requirePermission('task.manage'), async (context) => {
   const task = await context.env.DB.prepare(`SELECT id, title, assignee_id FROM tasks WHERE id=? AND archived_at IS NULL`).bind(taskId).first<{ id: string; title: string; assignee_id: string | null }>();
   if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
 
-  const rawBody = await context.req.json().catch(() => ({}));
-  const body: Record<string, unknown> = typeof rawBody === 'object' && rawBody !== null ? (rawBody as Record<string, unknown>) : {};
+  const parsed = updateTaskSchema.safeParse(await context.req.json().catch(() => null));
+  if (!parsed.success) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Task update details are invalid', fields: parsed.error.flatten().fieldErrors } }, 422);
+  }
+  const input = parsed.data;
+  const values = input as Record<string, unknown>;
   const allowedFields: Record<string, string> = {
     title: 'title',
     description: 'description',
@@ -237,14 +284,21 @@ taskRoutes.patch('/:id', requirePermission('task.manage'), async (context) => {
     evidenceRequirements: 'evidence_requirements',
   };
 
+  const hasAssignee = values.assigneeId !== undefined;
+  const nextAssignee = hasAssignee ? (typeof values.assigneeId === 'string' ? values.assigneeId.trim() || null : null) : task.assignee_id;
+  if (hasAssignee && nextAssignee && !await eligibleAssignee(context.env.DB, nextAssignee)) {
+    return context.json({ ok: false, error: { code: 'INVALID_ASSIGNEE', message: 'Tasks can only be assigned to active working members' } }, 422);
+  }
+
   const updates: string[] = [];
   const binds: unknown[] = [];
 
   for (const [key, column] of Object.entries(allowedFields)) {
-    if (key in body && body[key] !== undefined) {
-      updates.push(`${column} = ?`);
-      binds.push(body[key]);
-    }
+    if (values[key] === undefined) continue;
+    updates.push(`${column} = ?`);
+    if (key === 'assigneeId') binds.push(nextAssignee);
+    else if (key === 'domainId') binds.push(typeof values[key] === 'string' ? values[key].trim() || null : null);
+    else binds.push(values[key]);
   }
 
   if (updates.length === 0) {
@@ -254,8 +308,7 @@ taskRoutes.patch('/:id', requirePermission('task.manage'), async (context) => {
   updates.push('updated_at = unixepoch()');
   binds.push(taskId);
 
-  const nextAssignee = typeof body.assigneeId === 'string' && body.assigneeId.trim() ? body.assigneeId.trim() : null;
-  const assignmentChanged = Object.prototype.hasOwnProperty.call(body, 'assigneeId') && nextAssignee !== task.assignee_id;
+  const assignmentChanged = hasAssignee && nextAssignee !== task.assignee_id;
   const statements: D1PreparedStatement[] = [
     context.env.DB.prepare(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).bind(...binds),
     audit(context.env, context.get('user').id, 'task.updated', 'task', taskId),
@@ -352,9 +405,18 @@ taskRoutes.patch('/:id/status', async (context) => {
   if (parsed.data.status === 'ready_for_review') {
     return context.json({ ok: false, error: { code: 'SUBMISSION_REQUIRED', message: 'Submit evidence through the review workflow' } }, 409);
   }
+  if (parsed.data.status === 'archived') {
+    return context.json({ ok: false, error: { code: 'ARCHIVE_ENDPOINT_REQUIRED', message: 'Use the archive action instead of a status change' } }, 409);
+  }
+  if (task.status === 'ready_for_review' || task.status === 'approved') {
+    return context.json({ ok: false, error: { code: 'REVIEW_DECISION_REQUIRED', message: 'This task is under review or approved; a reviewer decision is required' } }, 409);
+  }
+  if (!user.permissions.includes('task.manage') && !(assigneeTransitions[task.status] ?? []).includes(parsed.data.status)) {
+    return context.json({ ok: false, error: { code: 'INVALID_TRANSITION', message: 'That status transition is not allowed for this task' } }, 409);
+  }
 
   await context.env.DB.batch([
-    context.env.DB.prepare(`UPDATE tasks SET status=?, updated_at=unixepoch() WHERE id=?`).bind(parsed.data.status, context.req.param('id')),
+    context.env.DB.prepare(`UPDATE tasks SET status=?, approved_at=NULL, updated_at=unixepoch() WHERE id=?`).bind(parsed.data.status, context.req.param('id')),
     audit(context.env, user.id, 'task.status_changed', 'task', context.req.param('id'), { from: task.status, to: parsed.data.status }),
   ]);
   return context.json({ ok: true, data: { status: parsed.data.status } });
@@ -468,6 +530,20 @@ taskRoutes.post('/:id/submissions', async (context) => {
     return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'You do not have permission to submit tasks' } }, 403);
   }
   if (task.assignee_id !== user.id) return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the assigned member can submit this task' } }, 403);
+  if (task.status === 'approved') {
+    return context.json({ ok: false, error: { code: 'TASK_ALREADY_APPROVED', message: 'An approved task cannot be submitted again' } }, 409);
+  }
+  if (task.status === 'ready_for_review') {
+    return context.json({ ok: false, error: { code: 'SUBMISSION_PENDING', message: 'This task is already awaiting review' } }, 409);
+  }
+  if (!['backlog', 'in_progress', 'changes_requested'].includes(task.status)) {
+    return context.json({ ok: false, error: { code: 'TASK_NOT_READY', message: 'Move the task to active work before submitting' } }, 409);
+  }
+  const pendingSubmission = await context.env.DB.prepare(`SELECT 1 FROM submissions WHERE task_id=? AND status='pending' LIMIT 1`)
+    .bind(task.id).first();
+  if (pendingSubmission) {
+    return context.json({ ok: false, error: { code: 'SUBMISSION_PENDING', message: 'A submission is already awaiting review' } }, 409);
+  }
   const requiredIncomplete = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM task_checklist_items WHERE task_id=? AND required=1 AND completed_at IS NULL`).bind(task.id).first<{ count: number }>();
   if ((requiredIncomplete?.count ?? 0) > 0) return context.json({ ok: false, error: { code: 'CHECKLIST_INCOMPLETE', message: 'Complete all required checklist items before submitting' } }, 409);
   const dependencyBlocked = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM task_dependencies td JOIN tasks t ON t.id=td.depends_on_task_id WHERE td.task_id=? AND t.status <> 'approved'`).bind(task.id).first<{ count: number }>();
@@ -476,7 +552,7 @@ taskRoutes.post('/:id/submissions', async (context) => {
   const submissionId = crypto.randomUUID();
   const statements = [
     context.env.DB.prepare(`INSERT INTO submissions (id, task_id, submitted_by, summary, version) VALUES (?, ?, ?, ?, ?)` ).bind(submissionId, task.id, user.id, parsed.data.summary, (latest?.version ?? 0) + 1),
-    context.env.DB.prepare(`UPDATE tasks SET status='ready_for_review', updated_at=unixepoch() WHERE id=?`).bind(task.id),
+    context.env.DB.prepare(`UPDATE tasks SET status='ready_for_review', approved_at=NULL, updated_at=unixepoch() WHERE id=?`).bind(task.id),
     audit(context.env, user.id, 'task.submitted', 'submission', submissionId, { taskId: task.id }),
   ];
   for (const evidence of parsed.data.evidence) statements.push(context.env.DB.prepare(`INSERT INTO submission_evidence (id, submission_id, kind, label, value) VALUES (?, ?, ?, ?, ?)` ).bind(crypto.randomUUID(), submissionId, evidence.kind, evidence.label, evidence.value));
@@ -490,6 +566,13 @@ taskRoutes.post('/:id/submissions', async (context) => {
     userIds: admins.results.map((row) => row.user_id),
     payload: { taskId: task.id, submissionId },
   }));
-  await context.env.DB.batch(statements);
+  try {
+    await context.env.DB.batch(statements);
+  } catch (error) {
+    if (isUniqueConstraint(error)) {
+      return context.json({ ok: false, error: { code: 'SUBMISSION_CONFLICT', message: 'A concurrent submission already exists for this task' } }, 409);
+    }
+    throw error;
+  }
   return context.json({ ok: true, data: { id: submissionId } }, 201);
 });

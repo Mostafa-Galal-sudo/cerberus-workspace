@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
+import { safeHttpUrl } from '../../../shared/url';
 import { useAuth } from '../../app/auth-context';
 import { Button, EmptyState, PageSkeleton, Panel } from '../../components/ui';
 import { api, ApiError, formatDate } from '../../lib/api';
@@ -275,14 +276,16 @@ export function GithubPage() {
                     </div>
                   </div>
 
-                  <a
-                    href={link.url}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem', color: 'var(--color-cyan-sentinel)', textDecoration: 'none' }}
-                  >
-                    Inspect <ExternalLink size={12} />
-                  </a>
+                  {safeHttpUrl(link.url) ? (
+                    <a
+                      href={safeHttpUrl(link.url)!}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.8rem', color: 'var(--color-cyan-sentinel)', textDecoration: 'none' }}
+                    >
+                      Inspect <ExternalLink size={12} />
+                    </a>
+                  ) : null}
                 </div>
               ))}
             </div>

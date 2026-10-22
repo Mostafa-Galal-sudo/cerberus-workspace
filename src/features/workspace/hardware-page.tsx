@@ -8,6 +8,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
+import { safeHttpUrl } from '../../../shared/url';
 import { useAuth } from '../../app/auth-context';
 import { Button, EmptyState, PageSkeleton, Panel, StatusBadge } from '../../components/ui';
 import { api, ApiError } from '../../lib/api';
@@ -214,9 +215,9 @@ export function HardwarePage() {
               )}
 
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto', paddingTop: '10px', borderTop: '1px solid var(--color-border)' }}>
-                {item.datasheet_url ? (
+                {safeHttpUrl(item.datasheet_url) ? (
                   <a
-                    href={item.datasheet_url}
+                    href={safeHttpUrl(item.datasheet_url)!}
                     target="_blank"
                     rel="noreferrer noopener"
                     style={{ fontSize: '0.8rem', color: 'var(--color-cyan-sentinel)', display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'none' }}

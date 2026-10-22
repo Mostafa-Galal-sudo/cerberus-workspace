@@ -1,10 +1,14 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { env } from 'cloudflare:test';
+import app from '../../worker/index';
 import { computeHmacSha256, sha256 } from '../../worker/services/security';
 import {
   ADMIN_EMAIL,
   MEMBER_EMAIL,
+  MEMBER_ID,
+  bindings,
   call,
+  createTask,
   login,
   readBody,
   readData,
@@ -22,6 +26,7 @@ describe('GitHub integration, administration and assistant telemetry', () => {
   });
 
   it('configures GitHub, verifies webhook signatures and links task references', async () => {
+    const linkedTaskId = await createTask(admin, { assigneeId: MEMBER_ID, title: 'GitHub webhook linked task' });
     const settings = await call(admin, '/api/v1/github/settings', {
       method: 'POST',
       body: JSON.stringify({
@@ -37,7 +42,7 @@ describe('GitHub integration, administration and assistant telemetry', () => {
       ref: 'refs/heads/main',
       commits: [{
         id: 'abc1234',
-        message: 'feat(firmware): implement telemetry for task_1_1',
+        message: `feat(firmware): implement telemetry for ${linkedTaskId}`,
         url: 'https://github.com/Mostafa-Galal-sudo/cerberus-workspace/commit/abc1234',
       }],
     });
@@ -53,6 +58,18 @@ describe('GitHub integration, administration and assistant telemetry', () => {
       body: payload,
     });
     expect(accepted.status).toBe(200);
+
+    const duplicate = await call(null, '/api/v1/github/webhook', {
+      method: 'POST',
+      headers: {
+        'x-github-event': 'push',
+        'x-github-delivery': 'delivery-integration-1',
+        'x-hub-signature-256': `sha256=${signature}`,
+      },
+      body: payload,
+    });
+    expect(duplicate.status).toBe(200);
+    expect((await readData<{ duplicate?: boolean }>(duplicate)).duplicate).toBe(true);
 
     const rejected = await call(null, '/api/v1/github/webhook', {
       method: 'POST',
@@ -85,24 +102,32 @@ describe('GitHub integration, administration and assistant telemetry', () => {
     expect(data.hasSecret).toBe(true);
     expect(data.events.some((event) => event.deliveryId === 'delivery-integration-1')).toBe(true);
     expect(data.events.some((event) => event.deliveryId === 'delivery-integration-2')).toBe(false);
-    expect(data.links.some((link) => link.resource_id === 'task_1_1' && link.github_type === 'commit')).toBe(true);
+    expect(data.links.some((link) => link.resource_id === linkedTaskId && link.github_type === 'commit')).toBe(true);
   });
 
   it('records simulated GitHub events without external calls', async () => {
+    const simulatedTaskId = await createTask(admin, { assigneeId: MEMBER_ID, title: 'Simulated GitHub event task' });
     const simulated = await call(admin, '/api/v1/github/simulate-event', {
       method: 'POST',
-      body: JSON.stringify({ eventType: 'push', taskId: 'task_1_2', commitMessage: 'feat: wire task_1_2 telemetry' }),
+      body: JSON.stringify({ eventType: 'push', taskId: simulatedTaskId, commitMessage: `feat: wire ${simulatedTaskId} telemetry` }),
     });
     expect(simulated.status).toBe(201);
 
     const data = await readData<{ deliveryId: string; taskId: string; linked: boolean }>(simulated);
-    expect(data.taskId).toBe('task_1_2');
+    expect(data.taskId).toBe(simulatedTaskId);
     expect(data.linked).toBe(true);
 
     const status = await call(admin, '/api/v1/github/status');
     const payload = await readBody<{ events: Array<{ deliveryId: string }>; links: Array<{ resource_id: string }> }>(status);
     expect(payload.data.events.some((event) => event.deliveryId === data.deliveryId)).toBe(true);
-    expect(payload.data.links.some((link) => link.resource_id === 'task_1_2')).toBe(true);
+    expect(payload.data.links.some((link) => link.resource_id === simulatedTaskId)).toBe(true);
+
+    const missing = await call(admin, '/api/v1/github/simulate-event', {
+      method: 'POST',
+      body: JSON.stringify({ taskId: `task_missing_${Date.now()}` }),
+    });
+    expect(missing.status).toBe(404);
+    expect((await readBody(missing)).error?.code).toBe('NOT_FOUND');
   });
 
   it('exports a checksummed backup and verifies restore payload integrity', async () => {
@@ -182,9 +207,42 @@ describe('GitHub integration, administration and assistant telemetry', () => {
     expect(reply.reply).toContain('task ledger status');
     expect(reply.usageId).toBeTruthy();
 
-    const usage = await call(member, '/api/v1/assistant/usage');
+    const usage = await call(admin, '/api/v1/assistant/usage');
     expect(usage.status).toBe(200);
     const rows = await readData<Array<{ id: string; model: string; status: string }>>(usage);
     expect(rows.some((row) => row.id === reply.usageId && row.status === 'completed')).toBe(true);
+
+    const memberUsage = await call(member, '/api/v1/assistant/usage');
+    expect(memberUsage.status).toBe(403);
+  });
+
+  it('fails the webhook closed while disabled or without any configured secret', async () => {
+    const disabled = await call(admin, '/api/v1/github/settings', {
+      method: 'POST',
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(disabled.status).toBe(200);
+
+    const disabledHook = await app.request('/api/v1/github/webhook', {
+      method: 'POST',
+      headers: { 'x-github-event': 'ping', 'x-github-delivery': 'integration-disabled' },
+      body: '{}',
+    }, bindings);
+    expect(disabledHook.status).toBe(503);
+    expect((await readBody(disabledHook)).error?.code).toBe('INTEGRATION_DISABLED');
+
+    const enabledWithoutSecret = await call(admin, '/api/v1/github/settings', {
+      method: 'POST',
+      body: JSON.stringify({ enabled: true, webhookSecret: '' }),
+    });
+    expect(enabledWithoutSecret.status).toBe(200);
+
+    const unconfiguredHook = await app.request('/api/v1/github/webhook', {
+      method: 'POST',
+      headers: { 'x-github-event': 'ping', 'x-github-delivery': 'integration-no-secret' },
+      body: '{}',
+    }, { ...bindings, GITHUB_WEBHOOK_SECRET: undefined });
+    expect(unconfiguredHook.status).toBe(503);
+    expect((await readBody(unconfiguredHook)).error?.code).toBe('WEBHOOK_NOT_CONFIGURED');
   });
 });

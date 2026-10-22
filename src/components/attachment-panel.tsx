@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Download, Paperclip, Trash2, Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
+import { safeHttpUrl } from '../../shared/url';
 import { useAuth } from '../app/auth-context';
 import { Button } from './ui';
 import { api, ApiError, formatDate } from '../lib/api';
@@ -100,14 +101,16 @@ export function AttachmentPanel({ resourceType, resourceId, canUpload }: {
                 </small>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-                <a
-                  href={item.url}
-                  download
-                  className="button button-secondary button-sm"
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', fontSize: '0.75rem', border: '1px solid var(--color-border)', borderRadius: '4px', textDecoration: 'none', color: 'inherit' }}
-                >
-                  <Download size={13} /> Download
-                </a>
+                {(item.url.startsWith('/api/v1/attachments/') || safeHttpUrl(item.url)) ? (
+                  <a
+                    href={item.url}
+                    download
+                    className="button button-secondary button-sm"
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '4px 8px', fontSize: '0.75rem', border: '1px solid var(--color-border)', borderRadius: '4px', textDecoration: 'none', color: 'inherit' }}
+                  >
+                    <Download size={13} /> Download
+                  </a>
+                ) : null}
                 {(item.ownerId === user?.id || user?.roles.includes('super_admin')) && (
                   <button
                     type="button"
