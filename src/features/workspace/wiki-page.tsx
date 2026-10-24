@@ -7,7 +7,9 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../app/auth-context';
+import { MarkdownEditorField, MarkdownRenderer } from '../../components/markdown';
 import { Button, EmptyState, PageSkeleton, Panel } from '../../components/ui';
 import { api, ApiError, formatDate } from '../../lib/api';
 
@@ -49,10 +51,12 @@ const CATEGORIES = ['All', 'Architecture', 'Hardware', 'Cybersecurity', 'Protoco
 export function WikiPage() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { slug: routeSlug } = useParams();
 
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const selectedSlug = routeSlug ?? null;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -101,7 +105,7 @@ export function WikiPage() {
     onSuccess: (data: { id: string; slug: string }) => {
       setIsCreateOpen(false);
       resetNewForm();
-      setSelectedSlug(data.slug);
+      navigate(`/wiki/${data.slug}`);
       setFeedback('Article published to workspace knowledge base.');
       void queryClient.invalidateQueries({ queryKey: ['wiki-list'] });
     },
@@ -165,10 +169,24 @@ export function WikiPage() {
         </div>
       )}
 
-      {selectedSlug && detailQuery.data ? (
+      {selectedSlug && detailQuery.isLoading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/wiki')} style={{ alignSelf: 'flex-start' }}>
+            ← Back to knowledge directory
+          </Button>
+          <PageSkeleton />
+        </div>
+      ) : selectedSlug && detailQuery.isError ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/wiki')} style={{ alignSelf: 'flex-start' }}>
+            ← Back to knowledge directory
+          </Button>
+          <EmptyState title="Article unavailable" body="The page may have been archived or your role may not have access to it." />
+        </div>
+      ) : selectedSlug && detailQuery.data ? (
         /* Detailed Article Reader View */
         <div className="article-reader-view" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <Button variant="ghost" size="sm" onClick={() => setSelectedSlug(null)} style={{ alignSelf: 'flex-start' }}>
+          <Button variant="ghost" size="sm" onClick={() => navigate('/wiki')} style={{ alignSelf: 'flex-start' }}>
             ← Back to knowledge directory
           </Button>
 
@@ -194,9 +212,7 @@ export function WikiPage() {
             </div>
 
             {/* Markdown Body Rendering */}
-            <div className="wiki-markdown-body" style={{ fontSize: '0.95rem', lineHeight: 1.7, whiteSpace: 'pre-wrap', color: 'var(--color-text)' }}>
-              {detailQuery.data.page.contentMarkdown}
-            </div>
+            <MarkdownRenderer content={detailQuery.data.page.contentMarkdown} className="wiki-markdown-body" />
 
             {/* Version History Drawer */}
             <div style={{ marginTop: '36px', borderTop: '1px solid var(--color-border)', paddingTop: '16px' }}>
@@ -266,7 +282,9 @@ export function WikiPage() {
                 <button
                   type="button"
                   key={item.id}
-                  onClick={() => setSelectedSlug(item.slug)}
+                  onClick={() => {
+                    navigate(`/wiki/${item.slug}`);
+                  }}
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
@@ -348,17 +366,14 @@ export function WikiPage() {
                 </label>
               </div>
 
-              <label>
-                <small>Content (Markdown) *</small>
-                <textarea
-                  rows={10}
-                  required
-                  value={newContent}
-                  onChange={(e) => setNewContent(e.target.value)}
-                  placeholder="# Technical Specification\n\nDocument architectural decisions, equations, schematics, and verification procedures..."
-                  style={{ width: '100%', padding: '10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.85rem' }}
-                />
-              </label>
+              <MarkdownEditorField
+                label="Content (Markdown) *"
+                rows={10}
+                required
+                value={newContent}
+                onChange={setNewContent}
+                placeholder="# Technical Specification\n\nDocument architectural decisions, equations, schematics, and verification procedures..."
+              />
 
               <label>
                 <small>Change Summary</small>
@@ -392,16 +407,13 @@ export function WikiPage() {
             </div>
 
             <form onSubmit={(e) => { e.preventDefault(); createVersion.mutate(detailQuery.data!.page.id); }} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <label>
-                <small>Updated Content (Markdown) *</small>
-                <textarea
-                  rows={12}
-                  required
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  style={{ width: '100%', padding: '10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', fontFamily: 'monospace', fontSize: '0.85rem' }}
-                />
-              </label>
+              <MarkdownEditorField
+                label="Updated Content (Markdown) *"
+                rows={12}
+                required
+                value={editContent}
+                onChange={setEditContent}
+              />
 
               <label>
                 <small>Summary of Revision Changes *</small>

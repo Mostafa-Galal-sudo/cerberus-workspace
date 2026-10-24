@@ -53,12 +53,14 @@
 - Direct/team channels, channel-membership enforcement, message posting, author-only editing, author/admin deletion, read markers, announcements with audience filtering, and per-user notifications.
 - `workspace_events` persists one row per recipient. The SSE endpoint streams events with `Last-Event-ID` replay, a bounded 25-second connection, and a 2-second internal poll; the client invalidates only the affected React Query families. A 30-second polling fallback covers reconnects and unsupported environments.
 - Task evidence attachments use a private R2 binding, 10 MB limits, sanitized filenames, SHA-256 checksums stored in D1, resource-level upload authorization, audited downloads, and soft archival with an audit record. Submission evidence is restricted to the submitter and reviewers; `503 ATTACHMENTS_UNAVAILABLE` is returned when the binding is absent.
+- The Notification Center adds unread counts with a sidebar badge, atomic read-all, type/read filtering with pagination meta, server-resolved deep links, and realtime invalidation written by the notification trigger.
 
 ## WS-06 — Documentation wiki
 
 **Status: implemented.**
 
 - Markdown pages with categories, visibility, immutable version history, search, and supervisor read-only enforcement.
+- Pages render GitHub-flavored Markdown through `react-markdown` with raw HTML disabled and a strict URL allowlist; the editor offers a live preview and the selected page is reflected in the URL.
 
 ## WS-07 — Defects and blockers
 
@@ -71,6 +73,8 @@
 **Status: implemented.**
 
 - Hardware catalogue, quantity-aware checkout and return, assignment history, experiment definitions, owner-checked runs, input parameters, actual results, validation notes, and observed metrics.
+- Hardware items declare an explicit `quantity` or `serialized` tracking mode, record the return condition, keep a custody and maintenance ledger, and surface low stock and overdue maintenance.
+- Experiment runs are numbered atomically, validated per metric, exportable as CSV, comparable in the UI, and optionally linked to a task or checkpoint.
 
 ## WS-09 — Decisions and worklogs
 
@@ -109,6 +113,18 @@
 - CI run `39707287338` passed both jobs for the remediation commit `cd53399`: verify (typecheck, lint, 72 unit tests, 76 integration tests, production build) and E2E (6 Playwright tests). The prior CI run `39677694573` covered the pre-remediation state. Remediation evidence is recorded in `docs/SECURITY_AUDIT_2026-10-22.md`.
 - Playwright covers first-login password replacement, generic recovery requests, member route guards, administrative reassignment, attachment upload/download/archive, and server-rendered PDF downloads. The suite uses `reuseExistingServer: false`, resets isolated persistence, and runs the production build before testing.
 
+## Phase 1 — documentation safety, run explorer, hardware lifecycle, notifications, search
+
+**Status: implemented and verified locally; not deployed.**
+
+- Migration `0008_phase1_workspace.sql` adds hardware `tracking_mode`/`minimum_quantity`, return-condition metadata, the hardware maintenance log, experiment run task/checkpoint links, and the `notifications_workspace_event` trigger that writes `workspace_events` rows. It is applied to local D1 only; remote D1 remains at `0001`–`0007`.
+- Wiki pages and assistant replies render GitHub-flavored Markdown through `react-markdown` + `remark-gfm` with raw HTML disabled and a strict URL allowlist (`http`, `https`, `mailto`, relative). The wiki page keeps the selected slug in the URL and provides a live editor preview.
+- Experiment runs have list/create/detail plus CSV export, per-metric validation, atomic `run_number` allocation backed by a unique index, and UI history, comparison, trend chart, and optional task/checkpoint links.
+- Hardware supports explicit `quantity` and `serialized` tracking modes, admin-only checkout and maintenance, holder-or-admin return with a required condition, custody history, maintenance/calibration log, low-stock state, and overdue maintenance.
+- The Notification Center exposes paginated filtering, an atomic read-all, a sidebar unread badge, server-resolved deep links, and realtime invalidation from the notification trigger. Polling remains the fallback.
+- Global search covers tasks, wiki pages, and decisions with server-side ACL filtering, and the Ctrl/Cmd+K palette adds recent items, quick actions, and keyboard navigation.
+- New coverage: `tests/unit/markdown.test.tsx`, `tests/unit/palette.test.ts`, schema assertions in `tests/unit/schemas.test.ts`, `tests/integration/phase1-workspace.test.ts`, and two E2E cases for wiki rendering/preview and the command palette.
+
 ## Verification
 
 ```powershell
@@ -120,4 +136,4 @@ npm run build
 npm run test:e2e
 ```
 
-The integration suite runs the real Hono worker against an isolated D1 database through `@cloudflare/vitest-pool-workers`, applying every migration before each test file. It covers onboarding, authentication/CSRF/RBAC, password recovery, task and checkpoint review, multi-evidence persistence, task comments, realtime events, R2 attachments, submission-evidence access control, reassignment, server PDFs, chat/wiki/issues/hardware/experiments/decisions/worklogs/announcements, GitHub webhooks and outbound guards, administration, backup checksums, CSV exports, and assistant telemetry. Current totals: 72 unit tests, 76 integration tests across 12 files, and 6 Playwright end-to-end tests against an isolated local Worker, D1, and R2 state. The remediation evidence and residual risks are recorded in `docs/SECURITY_AUDIT_2026-10-22.md`.
+The integration suite runs the real Hono worker against an isolated D1 database through `@cloudflare/vitest-pool-workers`, applying every migration before each test file. It covers onboarding, authentication/CSRF/RBAC, password recovery, task and checkpoint review, multi-evidence persistence, task comments, realtime events, R2 attachments, submission-evidence access control, reassignment, server PDFs, chat/wiki/issues/hardware/experiments/decisions/worklogs/announcements, GitHub webhooks and outbound guards, administration, backup checksums, CSV exports, assistant telemetry, and the Phase 1 search/notification/run/hardware slices. Current totals: 85 unit tests across 15 files, 80 integration tests across 13 files, and 8 Playwright end-to-end tests against an isolated local Worker, D1, and R2 state. Phase 1 is local-only: migration `0008` is not applied remotely and production still runs Worker `a775154e-6d0a-4a98-b571-a0035aefa3a0`. The remediation evidence and residual risks are recorded in `docs/SECURITY_AUDIT_2026-10-22.md`.

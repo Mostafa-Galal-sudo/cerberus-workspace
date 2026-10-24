@@ -1,14 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Play,
+  History,
   Plus,
   Search,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useAuth } from '../../app/auth-context';
 import { Button, EmptyState, PageSkeleton, Panel } from '../../components/ui';
 import { api, ApiError } from '../../lib/api';
+import { ExperimentRunsPanel } from './experiment-runs-panel';
 
 interface Experiment {
   id: string;
@@ -34,7 +35,6 @@ export function ExperimentsPage() {
   const [search, setSearch] = useState('');
   const [selectedExp, setSelectedExp] = useState<Experiment | null>(null);
   const [isDesignOpen, setIsDesignOpen] = useState(false);
-  const [isRunOpen, setIsRunOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
 
   // Design Form State
@@ -47,14 +47,12 @@ export function ExperimentsPage() {
   const [expectedResults, setExpectedResults] = useState('');
   const [reproducibility, setReproducibility] = useState('');
 
-  // Run Form State
-  const [actualResults, setActualResults] = useState('');
-  const [validationNotes, setValidationNotes] = useState('');
-  const [metricName, setMetricName] = useState('Detection Latency');
-  const [metricValue, setMetricValue] = useState<number | ''>(42);
-  const [metricUnit, setMetricUnit] = useState('ms');
+  const isSupervisor = user?.roles.includes('project_supervisor') && !user?.permissions.includes('workspace.admin');
 
-  const isSupervisor = user?.roles.includes('project_supervisor');
+  const closeExplorer = useCallback(() => setSelectedExp(null), []);
+  const canRecordRun = (experiment: Experiment) =>
+    Boolean(user) && !isSupervisor
+    && (experiment.owner_id === user?.id || Boolean(user?.roles.includes('super_admin')));
 
   const query = useQuery({
     queryKey: ['experiments'],
@@ -83,33 +81,6 @@ export function ExperimentsPage() {
       void queryClient.invalidateQueries({ queryKey: ['experiments'] });
     },
     onError: (err) => setFeedback(err instanceof ApiError ? err.message : 'Registration failed'),
-  });
-
-  const recordRun = useMutation({
-    mutationFn: () =>
-      api<{ runNumber: number }>(`/workspace/experiments/${selectedExp?.id}/runs`, {
-        method: 'POST',
-        body: JSON.stringify({
-          actualResults,
-          validationNotes,
-          metrics: [
-            {
-              name: metricName,
-              value: metricValue === '' ? undefined : Number(metricValue),
-              unit: metricUnit,
-              observed: true,
-            },
-          ],
-        }),
-      }),
-    onSuccess: (data: { runNumber: number }) => {
-      setIsRunOpen(false);
-      setActualResults('');
-      setValidationNotes('');
-      setFeedback(`Experiment run #${data.runNumber} recorded with telemetry verification.`);
-      void queryClient.invalidateQueries({ queryKey: ['experiments'] });
-    },
-    onError: (err) => setFeedback(err instanceof ApiError ? err.message : 'Run recording failed'),
   });
 
   const resetDesignForm = () => {
@@ -204,18 +175,13 @@ export function ExperimentsPage() {
                   Lead: <strong>{exp.ownerName}</strong>
                 </span>
 
-                {(!isSupervisor || exp.owner_id === user?.id) && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      setSelectedExp(exp);
-                      setIsRunOpen(true);
-                    }}
-                  >
-                    <Play size={14} /> Execute run
-                  </Button>
-                )}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setSelectedExp(exp)}
+                >
+                  <History size={14} /> Run history
+                </Button>
               </div>
             </Panel>
           ))}
@@ -319,76 +285,17 @@ export function ExperimentsPage() {
         </div>
       )}
 
-      {/* Record Test Run Modal */}
-      {isRunOpen && selectedExp && (
-        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}>
-          <div className="modal-card" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', maxWidth: '540px', width: '100%', padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--color-border)', paddingBottom: '10px' }}>
-              <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Execute Run: {selectedExp.experiment_code}</h3>
-              <Button variant="ghost" size="sm" onClick={() => setIsRunOpen(false)}><X size={16} /></Button>
-            </div>
-
-            <form onSubmit={(e) => { e.preventDefault(); recordRun.mutate(); }} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <label>
-                <small>Observed Results *</small>
-                <textarea
-                  rows={3}
-                  required
-                  value={actualResults}
-                  onChange={(e) => setActualResults(e.target.value)}
-                  placeholder="Detailed quantitative and qualitative behavior observed during execution..."
-                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                />
-              </label>
-
-              <label>
-                <small>Validation Notes</small>
-                <textarea
-                  rows={2}
-                  value={validationNotes}
-                  onChange={(e) => setValidationNotes(e.target.value)}
-                  placeholder="Environmental anomalies, calibration adjustments, or baseline drift..."
-                  style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                />
-              </label>
-
-              <div style={{ background: 'var(--color-surface-subtle)', padding: '12px', borderRadius: '6px', border: '1px solid var(--color-border)' }}>
-                <strong style={{ fontSize: '0.85rem', display: 'block', marginBottom: '8px' }}>Key Telemetry Metric</strong>
-                <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '8px' }}>
-                  <input
-                    type="text"
-                    value={metricName}
-                    onChange={(e) => setMetricName(e.target.value)}
-                    placeholder="Metric Name"
-                    style={{ padding: '6px', fontSize: '0.8rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                  />
-                  <input
-                    type="number"
-                    step="any"
-                    value={metricValue}
-                    onChange={(e) => setMetricValue(e.target.value === '' ? '' : Number(e.target.value))}
-                    placeholder="Value"
-                    style={{ padding: '6px', fontSize: '0.8rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                  />
-                  <input
-                    type="text"
-                    value={metricUnit}
-                    onChange={(e) => setMetricUnit(e.target.value)}
-                    placeholder="Unit (ms, %, dBm)"
-                    style={{ padding: '6px', fontSize: '0.8rem', background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                <Button type="button" variant="ghost" onClick={() => setIsRunOpen(false)}>Cancel</Button>
-                <Button type="submit" variant="primary" disabled={recordRun.isPending || !actualResults.trim()}>
-                  {recordRun.isPending ? 'Logging run...' : 'Commit Run Record'}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {selectedExp && (
+        <ExperimentRunsPanel
+          key={selectedExp.id}
+          experiment={{
+            id: selectedExp.id,
+            experiment_code: selectedExp.experiment_code,
+            title: selectedExp.title,
+          }}
+          canRecord={canRecordRun(selectedExp)}
+          onClose={closeExplorer}
+        />
       )}
     </div>
   );

@@ -17,27 +17,54 @@ import {
   Menu,
   MessageSquare,
   Scale,
+  Search,
   Server,
   Settings,
   ShieldCheck,
   Users,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/auth-context';
 import { useRealtimeEvents } from '../lib/use-realtime-events';
+import { api } from '../lib/api';
 import { Button } from './ui';
+import { CommandPalette } from './command-palette';
 import { CerberusLogo, CerberusSentinelStatus } from './cerberus-logo';
 
 export function AppShell() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [mode, setMode] = useState<'member' | 'admin' | 'supervisor'>(() =>
     user?.roles.includes('super_admin') ? 'admin' : user?.roles.includes('project_supervisor') ? 'supervisor' : 'member'
   );
   useRealtimeEvents(Boolean(user));
+
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setPaletteOpen((current) => !current);
+      }
+    };
+    document.addEventListener('keydown', handleShortcut);
+    return () => document.removeEventListener('keydown', handleShortcut);
+  }, []);
+
+  const unreadQuery = useQuery({
+    queryKey: ['notifications', 'unread'],
+    queryFn: () => api<{ count: number }>('/collaboration/notifications/unread-count'),
+    enabled: Boolean(user),
+    refetchInterval: 60_000,
+    staleTime: 15_000,
+  });
+  const unreadCount = unreadQuery.data?.count ?? 0;
 
   if (!user) return null;
 
@@ -83,9 +110,14 @@ export function AppShell() {
       {/* Mobile Header */}
       <header className="mobile-header">
         <CerberusLogo size="sm" />
-        <Button variant="ghost" size="sm" onClick={() => setOpen(!open)} aria-label="Toggle navigation">
-          {open ? <X /> : <Menu />}
-        </Button>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <Button variant="ghost" size="sm" onClick={() => setPaletteOpen(true)} aria-label="Search the workspace">
+            <Search size={18} />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setOpen(!open)} aria-label="Toggle navigation">
+            {open ? <X /> : <Menu />}
+          </Button>
+        </div>
       </header>
 
       {/* Sidebar Navigation */}
@@ -118,9 +150,19 @@ export function AppShell() {
         <CerberusSentinelStatus />
 
         <div style={{ marginTop: '10px' }}>
+          <button type="button" className="utility-link utility-search" onClick={() => setPaletteOpen(true)}>
+            <Search size={16} />
+            <span>Search</span>
+            <kbd>Ctrl K</kbd>
+          </button>
           <NavLink className="utility-link" to="/notifications">
             <Bell size={16} />
             <span>Alerts</span>
+            {unreadCount > 0 && (
+              <span className="nav-badge" aria-label={`${unreadCount} unread notifications`}>
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </span>
+            )}
           </NavLink>
           {mode === 'admin' && (
             <NavLink className="utility-link" to="/settings">
@@ -146,6 +188,8 @@ export function AppShell() {
       <main id="main-content">
         <Outlet context={{ mode }} />
       </main>
+
+      {paletteOpen && <CommandPalette onClose={closePalette} />}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { useAuth } from '../../app/auth-context';
+import { MarkdownRenderer } from '../../components/markdown';
 import { Button, Panel } from '../../components/ui';
 import { api, formatDate } from '../../lib/api';
 
@@ -132,9 +133,13 @@ export function AssistantPage() {
                     <span>{formatDate(msg.timestamp)}</span>
                   </div>
 
-                  <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                    {msg.text}
-                  </p>
+                  {isUser ? (
+                    <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                      {msg.text}
+                    </p>
+                  ) : (
+                    <MarkdownRenderer content={msg.text} className="assistant-markdown" />
+                  )}
 
                   {/* Grounding Sources */}
                   {msg.sources && msg.sources.length > 0 && (

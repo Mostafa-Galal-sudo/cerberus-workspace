@@ -1,17 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   Cpu,
   ExternalLink,
+  History,
   Plus,
   Search,
   UserCheck,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { safeHttpUrl } from '../../../shared/url';
 import { useAuth } from '../../app/auth-context';
 import { Button, EmptyState, PageSkeleton, Panel, StatusBadge } from '../../components/ui';
 import { api, ApiError } from '../../lib/api';
+import { HardwareDetailPanel } from './hardware-detail-panel';
 
 interface HardwareItem {
   id: string;
@@ -22,6 +25,11 @@ interface HardwareItem {
   unit_cost: number | null;
   condition: string;
   purchase_status: string;
+  tracking_mode: 'quantity' | 'serialized';
+  min_quantity: number;
+  checkedOutQuantity: number;
+  availableQuantity: number;
+  lowStock: boolean;
   datasheet_url: string;
   notes: string;
   currentHolder?: string | null;
@@ -42,6 +50,7 @@ export function HardwarePage() {
   const [checkoutHolderId, setCheckoutHolderId] = useState('');
   const [checkoutQuantity, setCheckoutQuantity] = useState(1);
   const [checkoutNotes, setCheckoutNotes] = useState('');
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
 
   // New Item State
@@ -52,10 +61,13 @@ export function HardwarePage() {
   const [unitCost, setUnitCost] = useState<number | ''>('');
   const [condition, setCondition] = useState<'new' | 'good' | 'fair' | 'damaged' | 'retired'>('good');
   const [purchaseStatus, setPurchaseStatus] = useState<'requested' | 'ordered' | 'available' | 'unavailable'>('available');
+  const [trackingMode, setTrackingMode] = useState<'quantity' | 'serialized'>('quantity');
+  const [minQuantity, setMinQuantity] = useState(0);
   const [datasheetUrl, setDatasheetUrl] = useState('');
   const [notes, setNotes] = useState('');
 
-  const isAdmin = user?.roles.includes('super_admin');
+  const isAdmin = Boolean(user?.permissions.includes('workspace.admin') || user?.roles.includes('super_admin'));
+  const closeDetail = useCallback(() => setDetailId(null), []);
 
   const query = useQuery({
     queryKey: ['hardware'],
@@ -80,6 +92,8 @@ export function HardwarePage() {
           unitCost: unitCost === '' ? null : Number(unitCost),
           condition,
           purchaseStatus,
+          trackingMode,
+          minQuantity,
           datasheetUrl,
           notes,
         }),
@@ -99,7 +113,7 @@ export function HardwarePage() {
         method: 'POST',
         body: JSON.stringify({
           holderId: checkoutHolderId,
-          quantity: checkoutQuantity,
+          quantity: checkoutTarget?.tracking_mode === 'serialized' ? 1 : checkoutQuantity,
           notes: checkoutNotes,
         }),
       }),
@@ -119,6 +133,8 @@ export function HardwarePage() {
     setUnitCost('');
     setCondition('good');
     setPurchaseStatus('available');
+    setTrackingMode('quantity');
+    setMinQuantity(0);
     setDatasheetUrl('');
     setNotes('');
   };
@@ -163,6 +179,11 @@ export function HardwarePage() {
         </label>
         <span style={{ fontSize: '0.8rem', color: 'var(--color-muted)' }}>
           {filteredItems.length} components tracked
+          {(query.data ?? []).some((item) => item.lowStock) && (
+            <span className="inventory-low-stock" style={{ marginLeft: '10px' }}>
+              <AlertTriangle size={12} /> {(query.data ?? []).filter((item) => item.lowStock).length} low stock
+            </span>
+          )}
         </span>
       </Panel>
 
@@ -180,14 +201,24 @@ export function HardwarePage() {
                     <small style={{ color: 'var(--color-muted)', fontSize: '0.75rem' }}>{item.model || 'Standard model'}</small>
                   </div>
                 </div>
-                <StatusBadge status={item.condition} />
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <span className="tracking-chip">{item.tracking_mode === 'serialized' ? 'Serialized' : 'Quantity'}</span>
+                  <StatusBadge status={item.condition} />
+                </div>
               </div>
 
               <div style={{ background: 'var(--color-surface-subtle)', padding: '10px', borderRadius: '4px', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'var(--color-muted)' }}>Quantity in Stock:</span>
-                  <strong>{item.quantity} units</strong>
+                  <span style={{ color: 'var(--color-muted)' }}>Available / total:</span>
+                  <strong>{item.availableQuantity} / {item.quantity} {item.tracking_mode === 'serialized' ? 'unit' : 'units'}</strong>
                 </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--color-muted)' }}>Checked out:</span>
+                  <strong>{item.checkedOutQuantity}</strong>
+                </div>
+                {item.lowStock && (
+                  <span className="inventory-low-stock"><AlertTriangle size={12} /> At or below the {item.min_quantity}-unit threshold</span>
+                )}
                 {item.serial_number && (
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                     <span style={{ color: 'var(--color-muted)' }}>Serial Number:</span>
@@ -226,19 +257,25 @@ export function HardwarePage() {
                   </a>
                 ) : <span />}
 
-                {isAdmin && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => {
-                      setCheckoutTarget(item);
-                      setCheckoutQuantity(1);
-                      setCheckoutNotes('');
-                    }}
-                  >
-                    <UserCheck size={14} /> Allocate unit
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <Button variant="ghost" size="sm" onClick={() => setDetailId(item.id)}>
+                    <History size={14} /> Ledger
                   </Button>
-                )}
+                  {isAdmin && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={item.availableQuantity < 1 || item.condition === 'retired' || item.condition === 'damaged' || item.purchase_status !== 'available'}
+                      onClick={() => {
+                        setCheckoutTarget(item);
+                        setCheckoutQuantity(1);
+                        setCheckoutNotes('');
+                      }}
+                    >
+                      <UserCheck size={14} /> Allocate
+                    </Button>
+                  )}
+                </div>
               </div>
             </Panel>
           ))}
@@ -293,13 +330,49 @@ export function HardwarePage() {
                 </label>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <label>
+                  <small>Inventory model *</small>
+                  <select
+                    value={trackingMode}
+                    onChange={(e) => {
+                      const next = e.target.value as 'quantity' | 'serialized';
+                      setTrackingMode(next);
+                      if (next === 'serialized') setQuantity(1);
+                    }}
+                    style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
+                  >
+                    <option value="quantity">Quantity lot (interchangeable units)</option>
+                    <option value="serialized">Serialized unit (one physical item)</option>
+                  </select>
+                  <small style={{ display: 'block', marginTop: '4px', color: 'var(--color-muted)' }}>
+                    {trackingMode === 'serialized'
+                      ? 'Each serialized unit is tracked separately; checkout is limited to one.'
+                      : 'Units are interchangeable and custody records a quantity.'}
+                  </small>
+                </label>
+
+                <label>
+                  <small>Low-stock threshold</small>
+                  <input
+                    type="number"
+                    min={0}
+                    max={quantity}
+                    value={minQuantity}
+                    onChange={(e) => setMinQuantity(Number(e.target.value))}
+                    style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px' }}>
                 <label>
                   <small>Quantity *</small>
                   <input
                     type="number"
                     min={1}
                     required
+                    disabled={trackingMode === 'serialized'}
                     value={quantity}
                     onChange={(e) => setQuantity(Number(e.target.value))}
                     style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
@@ -330,6 +403,20 @@ export function HardwarePage() {
                     <option value="fair">Fair (Bench used)</option>
                     <option value="damaged">Damaged (Faulty)</option>
                     <option value="retired">Retired</option>
+                  </select>
+                </label>
+
+                <label>
+                  <small>Purchase status</small>
+                  <select
+                    value={purchaseStatus}
+                    onChange={(e) => setPurchaseStatus(e.target.value as 'requested' | 'ordered' | 'available' | 'unavailable')}
+                    style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
+                  >
+                    <option value="requested">Requested</option>
+                    <option value="ordered">Ordered</option>
+                    <option value="available">Available</option>
+                    <option value="unavailable">Unavailable</option>
                   </select>
                 </label>
               </div>
@@ -397,11 +484,17 @@ export function HardwarePage() {
                 <input
                   type="number"
                   min={1}
-                  max={checkoutTarget.quantity}
-                  value={checkoutQuantity}
+                  max={checkoutTarget.availableQuantity}
+                  disabled={checkoutTarget.tracking_mode === 'serialized'}
+                  value={checkoutTarget.tracking_mode === 'serialized' ? 1 : checkoutQuantity}
                   onChange={(e) => setCheckoutQuantity(Number(e.target.value))}
                   style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}
                 />
+                <small style={{ display: 'block', marginTop: '4px', color: 'var(--color-muted)' }}>
+                  {checkoutTarget.tracking_mode === 'serialized'
+                    ? 'Serialized unit: exactly one physical item is checked out.'
+                    : `${checkoutTarget.availableQuantity} of ${checkoutTarget.quantity} units are available.`}
+                </small>
               </label>
 
               <label>
@@ -425,6 +518,7 @@ export function HardwarePage() {
           </div>
         </div>
       )}
+      {detailId && <HardwareDetailPanel hardwareId={detailId} onClose={closeDetail} />}
     </div>
   );
 }

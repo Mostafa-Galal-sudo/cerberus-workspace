@@ -214,11 +214,23 @@ describe('collaboration and workspace modules', () => {
     expect(checkout.status).toBe(201);
     const assignmentId = (await readData<{ id: string }>(checkout)).id;
 
-    const returned = await call(admin, `/api/v1/workspace/hardware/assignments/${assignmentId}/return`, { method: 'POST' });
+    const returned = await call(admin, `/api/v1/workspace/hardware/assignments/${assignmentId}/return`, {
+      method: 'POST',
+      body: JSON.stringify({ condition: 'fair', notes: 'One unit returned with a scratched case.' }),
+    });
     expect(returned.status).toBe(200);
 
-    const assignment = await databaseValue<{ checked_in_at: number | null }>(`SELECT checked_in_at FROM hardware_assignments WHERE id=?`, assignmentId);
+    const assignment = await databaseValue<{ checked_in_at: number | null; condition_on_return: string | null }>(
+      `SELECT checked_in_at, condition_on_return FROM hardware_assignments WHERE id=?`, assignmentId);
     expect(assignment?.checked_in_at).toBeGreaterThan(0);
+    expect(assignment?.condition_on_return).toBe('fair');
+
+    const duplicateReturn = await call(admin, `/api/v1/workspace/hardware/assignments/${assignmentId}/return`, {
+      method: 'POST',
+      body: JSON.stringify({ condition: 'good' }),
+    });
+    expect(duplicateReturn.status).toBe(409);
+    expect((await readBody(duplicateReturn)).error?.code).toBe('ALREADY_RETURNED');
   });
 
   it('restricts experiment runs to the experiment owner', async () => {

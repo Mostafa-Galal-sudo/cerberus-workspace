@@ -63,3 +63,73 @@ test('downloads a server-rendered PDF report', async ({ page }) => {
   const bytes = readFileSync(filePath!);
   expect(bytes.subarray(0, 5).toString()).toBe('%PDF-');
 });
+
+test('renders safe GFM markdown and previews wiki content', async ({ page }) => {
+  const title = `E2E Markdown Probe ${Date.now()}`;
+  const content = [
+    '# E2E Heading',
+    '',
+    '| Metric | Value |',
+    '| --- | --- |',
+    '| RTT | 42 ms |',
+    '',
+    '<script>window.__markdownXss = 1</script>',
+    '',
+    '[unsafe](javascript:alert(1))',
+  ].join('\n');
+
+  await page.goto('/wiki');
+  await page.getByRole('button', { name: 'New knowledge article' }).click();
+  await expect(page.getByRole('heading', { name: 'Publish Documentation Article' })).toBeVisible();
+
+  const modal = page.locator('.modal-card');
+  await modal.getByPlaceholder(/e\.g\. SPI Bus/).fill(title);
+  await modal.locator('textarea').fill(content);
+  await modal.getByRole('tab', { name: 'Preview' }).click();
+
+  const preview = modal.locator('.markdown-preview');
+  await expect(preview.getByRole('heading', { name: 'E2E Heading' })).toBeVisible();
+  await expect(preview.locator('table')).toBeVisible();
+  await expect(preview.getByText('42 ms')).toBeVisible();
+  expect(await preview.locator('script').count()).toBe(0);
+
+  await modal.getByRole('tab', { name: 'Write' }).click();
+  await modal.getByRole('button', { name: 'Publish Article' }).click();
+
+  await expect(page).toHaveURL(/\/wiki\/e2e-markdown-probe/);
+  await expect(page.getByRole('heading', { name: title, level: 1 })).toBeVisible();
+
+  const article = page.locator('.wiki-markdown-body');
+  await expect(article.locator('table')).toBeVisible();
+  expect(await article.locator('script').count()).toBe(0);
+  const unsafeLink = article.locator('a', { hasText: 'unsafe' });
+  await expect(unsafeLink).toBeVisible();
+  expect(await unsafeLink.getAttribute('href') ?? '').not.toContain('javascript:');
+
+  const injected = await page.evaluate(() => (window as unknown as { __markdownXss?: number }).__markdownXss);
+  expect(injected).toBeUndefined();
+});
+
+test('opens the command palette with Ctrl+K and returns server search results', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Search Ctrl K' })).toBeVisible();
+  await page.keyboard.press('Control+k');
+
+  const dialog = page.getByRole('dialog', { name: 'Search the workspace' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('option', { name: /Overview dashboard/ })).toBeVisible();
+
+  await dialog.getByRole('combobox').fill('Deliver');
+  const firstResult = dialog.getByRole('option').first();
+  await expect(firstResult).toBeVisible({ timeout: 15_000 });
+  await expect(firstResult).toContainText('Deliver');
+  await expect(dialog.getByRole('option', { name: /Overview dashboard/ })).toHaveCount(0);
+
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+
+  await page.keyboard.press('Control+k');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeHidden();
+});

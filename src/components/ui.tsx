@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority';
-import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type HTMLAttributes, type ReactNode } from 'react';
 import { cn } from '../lib/utils';
 
 const buttonVariants = cva('button inline-flex items-center justify-center gap-2 rounded-md font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal disabled:cursor-not-allowed disabled:opacity-50', {
@@ -8,9 +8,11 @@ const buttonVariants = cva('button inline-flex items-center justify-center gap-2
     size: { sm: 'h-8 px-3 text-xs', md: 'h-10 px-4 text-sm', lg: 'h-12 px-5 text-sm' },
   }, defaultVariants: { variant: 'primary', size: 'md' },
 });
-export function Button({ className, variant, size, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & VariantProps<typeof buttonVariants>) {
-  return <button className={cn(buttonVariants({ variant, size }), className)} {...props} />;
-}
+export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement> & VariantProps<typeof buttonVariants>>(
+  function Button({ className, variant, size, ...props }, ref) {
+    return <button ref={ref} className={cn(buttonVariants({ variant, size }), className)} {...props} />;
+  },
+);
 
 export function Panel({ className, ...props }: HTMLAttributes<HTMLDivElement>) { return <div className={cn('panel', className)} {...props} />; }
 

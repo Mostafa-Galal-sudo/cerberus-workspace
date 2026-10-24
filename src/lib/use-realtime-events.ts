@@ -24,6 +24,7 @@ const INVALIDATIONS: Record<string, string[][]> = {
   'attachment.created': [['attachments']],
   'attachment.archived': [['attachments']],
   'password.reset_requested': [['notifications']],
+  'notification.created': [['notifications']],
 };
 
 /**

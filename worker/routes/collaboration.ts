@@ -6,10 +6,12 @@ import { audit } from '../services/audit';
 import { listWorkspaceEvents, workspaceEventStatements } from '../services/events';
 import { consumeRateLimit } from '../services/rate-limit';
 import { isSupervisor } from '../services/wiki-access';
+import { notificationRoutes } from './notifications';
 import type { AuthUser, Env, Variables } from '../types';
 
 export const collaborationRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 collaborationRoutes.use('*', requireAuth, requirePasswordChanged);
+collaborationRoutes.route('/notifications', notificationRoutes);
 
 collaborationRoutes.get('/events/poll', async (context) => {
   const after = Number(context.req.query('after') ?? 0);
@@ -225,15 +227,6 @@ collaborationRoutes.post('/announcements/:id/read', async (context) => {
     .bind(context.req.param('id'), ...audience).first();
   if (!announcement) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Announcement not found' } }, 404);
   await context.env.DB.prepare(`INSERT OR REPLACE INTO announcement_reads (announcement_id,user_id) VALUES (?,?)`).bind(context.req.param('id'),user.id).run();
-  return context.json({ ok: true, data: null });
-});
-
-collaborationRoutes.get('/notifications', async (context) => {
-  const rows = await context.env.DB.prepare(`SELECT * FROM notifications WHERE user_id=? ORDER BY created_at DESC LIMIT 100`).bind(context.get('user').id).all();
-  return context.json({ ok: true, data: rows.results });
-});
-collaborationRoutes.post('/notifications/:id/read', async (context) => {
-  await context.env.DB.prepare(`UPDATE notifications SET read_at=unixepoch() WHERE id=? AND user_id=?`).bind(context.req.param('id'),context.get('user').id).run();
   return context.json({ ok: true, data: null });
 });
 
