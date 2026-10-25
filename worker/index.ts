@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { adminRoutes } from './routes/admin';
+import { accountRoutes } from './routes/account';
 import { assistantRoutes } from './routes/assistant';
 import { attachmentRoutes } from './routes/attachments';
 import { authRoutes } from './routes/auth';
@@ -60,6 +61,7 @@ app.get('/api/v1/health', (context) => context.json({
 }));
 app.route('/api/v1/setup', setupRoutes);
 app.route('/api/v1/auth', authRoutes);
+app.route('/api/v1/account', accountRoutes);
 app.route('/api/v1/dashboard', dashboardRoutes);
 app.route('/api/v1/tasks', taskRoutes);
 app.route('/api/v1/planning', planningRoutes);
@@ -92,6 +94,8 @@ export default Object.assign(app, {
         env.DB.prepare(`DELETE FROM github_events WHERE received_at < unixepoch() - 2592000`),
         env.DB.prepare(`DELETE FROM assistant_usage WHERE created_at < unixepoch() - 7776000`),
         env.DB.prepare(`DELETE FROM email_outbox WHERE created_at < unixepoch() - 7776000`),
+        env.DB.prepare(`DELETE FROM login_challenges WHERE created_at < unixepoch() - 86400`),
+        env.DB.prepare(`DELETE FROM login_events WHERE created_at < unixepoch() - 7776000`),
       ]);
     } catch (error) {
       console.error(JSON.stringify({ level: 'error', service: 'scheduled-cleanup', message: error instanceof Error ? error.message : 'unknown' }));

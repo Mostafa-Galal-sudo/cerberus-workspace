@@ -27,6 +27,7 @@ import { WorklogsPage } from '../features/workspace/worklogs-page';
 import { GithubPage } from '../features/integrations/github-page';
 import { AdminCommandCenterPage } from '../features/admin/admin-command-center-page';
 import { AssistantPage } from '../features/assistant/assistant-page';
+import { AccountSecurityPage } from '../features/account/account-security-page';
 import { ReportsPage } from '../features/reports/reports-page';
 
 function Protected() {
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
       { path: 'worklogs', element: <WorklogsPage /> },
       { path: 'integrations/github', element: <GithubPage /> },
       { path: 'assistant', element: <AssistantPage /> },
+      { path: 'account/security', element: <AccountSecurityPage /> },
       { path: 'reports', element: <ReportsPage /> },
     ],
   },

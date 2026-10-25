@@ -1,244 +1,367 @@
-import { useMutation } from '@tanstack/react-query';
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  Archive,
   Bot,
+  Check,
+  MessageSquarePlus,
+  Pencil,
   Send,
   User,
+  X,
 } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../app/auth-context';
 import { MarkdownRenderer } from '../../components/markdown';
-import { Button, Panel } from '../../components/ui';
-import { api, formatDate } from '../../lib/api';
+import { Button, EmptyState, PageSkeleton, Panel } from '../../components/ui';
+import { api, apiWithMeta, ApiError, formatDate, type PageMeta } from '../../lib/api';
 
-interface ChatMessage {
+interface Citation {
+  index: number;
+  type: string;
   id: string;
-  sender: 'user' | 'assistant';
-  text: string;
-  sources?: Array<{ type: string; title: string; meta: string }>;
-  timestamp: number;
+  title: string;
+  meta: string;
+  snippet: string;
+  link: string;
 }
 
-function getTimestampSec(): number {
-  return Math.floor(Date.now() / 1000);
+interface ToolRun {
+  tool: string;
+  label: string;
+  resultCount: number;
+  durationMs: number;
 }
+
+interface AssistantMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations: Citation[];
+  toolRuns: ToolRun[];
+  createdAt: number;
+}
+
+interface AssistantThread {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  archived: boolean;
+  messageCount: number;
+  lastMessageAt: number | null;
+}
+
+interface ThreadDetail {
+  thread: AssistantThread;
+  messages: AssistantMessage[];
+}
+
+const PROMPT_SUGGESTIONS = [
+  'What are the critical project blockers currently open?',
+  'Summarize the six discipline roadmaps and member assignments.',
+  'What architecture decisions (ADRs) have been approved?',
+  'Explain the verification criteria for checkpoint approval.',
+];
+
+const EMPTY_THREADS: AssistantThread[] = [];
 
 export function AssistantPage() {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
   const [inputPrompt, setInputPrompt] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [
-    {
-      id: 'welcome',
-      sender: 'assistant',
-      text: 'Greetings, Sentinel Engineer. I am the CERBERUS AI Operational Assistant. I am directly grounded in the project database—including all six discipline roadmaps, verified task deliverables, architecture decisions, and open blockers. How can I assist your engineering validation today?',
-      timestamp: 1776300000,
-    },
-  ]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [sendError, setSendError] = useState('');
 
-  const chatMutation = useMutation({
-    mutationFn: (message: string) =>
-      api<{ reply: string; sources: Array<{ type: string; title: string; meta: string }>; usageId: string }>('/assistant/chat', {
-        method: 'POST',
-        body: JSON.stringify({ message }),
-      }),
+  const threadsQuery = useQuery({
+    queryKey: ['assistant', 'threads'],
+    queryFn: () => apiWithMeta<{ threads: AssistantThread[] }, PageMeta>('/assistant/threads?limit=50'),
+  });
+  const threads = threadsQuery.data?.data.threads ?? EMPTY_THREADS;
+  const activeId = selectedId && threads.some((thread) => thread.id === selectedId)
+    ? selectedId
+    : (threads[0]?.id ?? null);
+
+  const detailQuery = useQuery({
+    queryKey: ['assistant', 'thread', activeId],
+    queryFn: () => api<ThreadDetail>(`/assistant/threads/${activeId}`),
+    enabled: Boolean(activeId),
+  });
+  const messages = detailQuery.data?.messages ?? [];
+
+  const invalidateThreads = () => queryClient.invalidateQueries({ queryKey: ['assistant', 'threads'] });
+  const invalidateDetail = (threadId: string) => queryClient.invalidateQueries({ queryKey: ['assistant', 'thread', threadId] });
+
+  const createThread = useMutation({
+    mutationFn: () => api<{ thread: AssistantThread }>('/assistant/threads', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
     onSuccess: (data) => {
-      const assistantMsg: ChatMessage = {
-        id: crypto.randomUUID(),
-        sender: 'assistant',
-        text: data.reply,
-        sources: data.sources,
-        timestamp: getTimestampSec(),
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+      queryClient.setQueryData<{ data: { threads: AssistantThread[] }; meta: PageMeta }>(
+        ['assistant', 'threads'],
+        (current) => current
+          ? { ...current, data: { threads: [data.thread, ...current.data.threads.filter((thread) => thread.id !== data.thread.id)] } }
+          : current,
+      );
+      void invalidateThreads();
     },
   });
 
-  const handleSend = (textToSend?: string) => {
-    const text = textToSend ?? inputPrompt;
-    if (!text.trim() || chatMutation.isPending) return;
+  const sendMessage = useMutation({
+    mutationFn: ({ threadId, message }: { threadId: string; message: string }) =>
+      api<{ thread: AssistantThread; message: AssistantMessage; usageId: string }>(
+        `/assistant/threads/${threadId}/messages`,
+        { method: 'POST', body: JSON.stringify({ message }) },
+      ),
+    onSuccess: (_data, variables) => {
+      void invalidateDetail(variables.threadId);
+      void invalidateThreads();
+    },
+  });
 
-    const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      sender: 'user',
-      text,
-      timestamp: getTimestampSec(),
-    };
+  const renameThread = useMutation({
+    mutationFn: ({ threadId, title }: { threadId: string; title: string }) =>
+      api<{ thread: AssistantThread }>(`/assistant/threads/${threadId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title }),
+      }),
+    onSuccess: () => { void invalidateThreads(); },
+  });
 
-    setMessages((prev) => [...prev, userMsg]);
+  const archiveThread = useMutation({
+    mutationFn: (threadId: string) => api<{ archived: boolean }>(`/assistant/threads/${threadId}`, { method: 'DELETE' }),
+    onSuccess: (_data, threadId) => {
+      if (threadId === activeId) setSelectedId(null);
+      void invalidateThreads();
+    },
+  });
+
+  useEffect(() => {
+    if (messages.length === 0) return;
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages.length, sendMessage.isPending]);
+
+  const dispatchMessage = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || sendMessage.isPending || createThread.isPending) return;
+    setSendError('');
     setInputPrompt('');
-    chatMutation.mutate(text);
-    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+    try {
+      let threadId = activeId;
+      if (!threadId) {
+        const created = await createThread.mutateAsync();
+        threadId = created.thread.id;
+        setSelectedId(threadId);
+      }
+      await sendMessage.mutateAsync({ threadId, message: trimmed });
+    } catch (cause) {
+      setSendError(cause instanceof ApiError ? cause.message : 'The assistant could not answer that question');
+      setInputPrompt(trimmed);
+    }
   };
 
-  const PROMPT_SUGGESTIONS = [
-    'What are the critical project blockers currently open?',
-    'Summarize the six discipline roadmaps and member assignments.',
-    'What architecture decisions (ADRs) have been approved?',
-    'Explain the verification criteria for checkpoint approval.',
-  ];
+  const beginRename = (thread: AssistantThread) => {
+    setRenamingId(thread.id);
+    setRenameValue(thread.title);
+  };
+
+  const commitRename = async () => {
+    if (!renamingId) return;
+    const title = renameValue.trim();
+    if (!title) return;
+    await renameThread.mutateAsync({ threadId: renamingId, title });
+    setRenamingId(null);
+    setRenameValue('');
+  };
+
+  const busy = sendMessage.isPending || createThread.isPending;
 
   return (
-    <div className="page assistant-page" style={{ height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column' }}>
+    <div className="page assistant-page">
       <header className="page-header" style={{ marginBottom: '12px' }}>
         <div>
           <span className="breadcrumb">Intelligent Sentinel Telemetry</span>
           <h1>Cerberus AI Engineering Assistant</h1>
-          <p>Context-aware synthesis across discipline roadmaps, audit provenance, and technical documentation.</p>
+          <p>Persistent, citation-backed synthesis across discipline roadmaps, verified records, and documentation.</p>
         </div>
+        <Button
+          type="button"
+          onClick={async () => {
+            const created = await createThread.mutateAsync();
+            setSelectedId(created.thread.id);
+          }}
+          disabled={createThread.isPending}
+        >
+          <MessageSquarePlus size={16} /> New thread
+        </Button>
       </header>
 
-      <Panel style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, padding: '0', overflow: 'hidden' }}>
-        {/* Messages Stream */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          {messages.map((msg) => {
-            const isUser = msg.sender === 'user';
-            return (
-              <div
-                key={msg.id}
-                style={{
-                  display: 'flex',
-                  gap: '12px',
-                  maxWidth: isUser ? '80%' : '88%',
-                  alignSelf: isUser ? 'flex-end' : 'flex-start',
-                  flexDirection: isUser ? 'row-reverse' : 'row',
-                }}
-              >
-                <span
-                  className="avatar small"
-                  style={{
-                    background: isUser ? 'var(--color-surface-subtle)' : 'var(--color-cyan-sentinel)',
-                    color: isUser ? 'inherit' : '#000',
-                    width: '32px',
-                    height: '32px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  {isUser ? <User size={16} /> : <Bot size={16} />}
-                </span>
-
-                <div
-                  style={{
-                    background: isUser ? 'var(--color-surface-hover)' : 'var(--color-surface-subtle)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: '8px',
-                    padding: '14px 18px',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', fontSize: '0.75rem', color: 'var(--color-muted)' }}>
-                    <strong>{isUser ? user?.displayName : 'Cerberus Sentinel AI'}</strong>
-                    <span>{formatDate(msg.timestamp)}</span>
-                  </div>
-
-                  {isUser ? (
-                    <p style={{ margin: 0, fontSize: '0.9rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
-                      {msg.text}
-                    </p>
+      <div className="assistant-layout">
+        <aside className="assistant-thread-rail" aria-label="Assistant thread history">
+          <div className="panel-heading">
+            <h2>Threads</h2>
+            <span className="badge">{threads.length}</span>
+          </div>
+          {threadsQuery.isLoading ? (
+            <PageSkeleton />
+          ) : threads.length === 0 ? (
+            <p className="assistant-rail-empty">No threads yet. Ask the assistant to start one.</p>
+          ) : (
+            <ul className="assistant-thread-list">
+              {threads.map((thread) => (
+                <li key={thread.id} className={thread.id === activeId ? 'thread-row is-active' : 'thread-row'}>
+                  {renamingId === thread.id ? (
+                    <form
+                      className="thread-rename"
+                      onSubmit={(event) => { event.preventDefault(); void commitRename(); }}
+                    >
+                      <input
+                        autoFocus
+                        aria-label={`Rename ${thread.title}`}
+                        value={renameValue}
+                        maxLength={120}
+                        onChange={(event) => setRenameValue(event.target.value)}
+                      />
+                      <button type="submit" aria-label="Save thread title" disabled={!renameValue.trim()}><Check size={15} /></button>
+                      <button type="button" aria-label="Cancel rename" onClick={() => setRenamingId(null)}><X size={15} /></button>
+                    </form>
                   ) : (
-                    <MarkdownRenderer content={msg.text} className="assistant-markdown" />
-                  )}
-
-                  {/* Grounding Sources */}
-                  {msg.sources && msg.sources.length > 0 && (
-                    <div style={{ marginTop: '12px', borderTop: '1px solid var(--color-border)', paddingTop: '8px' }}>
-                      <small style={{ fontSize: '0.7rem', color: 'var(--color-cyan-sentinel)', fontWeight: 600, display: 'block', marginBottom: '4px' }}>
-                        GROUNDING CONTEXT RETRIEVED:
-                      </small>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                        {msg.sources.map((s, idx) => (
-                          <span
-                            key={idx}
-                            style={{
-                              fontSize: '0.7rem',
-                              padding: '2px 8px',
-                              background: 'var(--color-surface)',
-                              border: '1px solid var(--color-border)',
-                              borderRadius: '4px',
-                            }}
-                          >
-                            <strong>[{s.type.toUpperCase()}]</strong> {s.title} ({s.meta})
-                          </span>
-                        ))}
+                    <>
+                      <button
+                        type="button"
+                        className="thread-select"
+                        onClick={() => setSelectedId(thread.id)}
+                        aria-current={thread.id === activeId ? 'true' : undefined}
+                      >
+                        <span>{thread.title}</span>
+                        <small>{thread.messageCount} message{thread.messageCount === 1 ? '' : 's'} Â· {formatDate(thread.updatedAt)}</small>
+                      </button>
+                      <div className="thread-actions">
+                        <button type="button" aria-label={`Rename ${thread.title}`} onClick={() => beginRename(thread)}>
+                          <Pencil size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Archive ${thread.title}`}
+                          disabled={archiveThread.isPending}
+                          onClick={() => void archiveThread.mutateAsync(thread.id)}
+                        >
+                          <Archive size={13} />
+                        </button>
                       </div>
-                    </div>
+                    </>
                   )}
-                </div>
-              </div>
-            );
-          })}
-
-          {chatMutation.isPending && (
-            <div style={{ display: 'flex', gap: '12px', alignSelf: 'flex-start', alignItems: 'center' }}>
-              <span className="avatar small" style={{ background: 'var(--color-cyan-sentinel)', color: '#000', width: '32px', height: '32px' }}>
-                <Bot size={16} />
-              </span>
-              <div style={{ background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '8px', padding: '12px 18px', fontSize: '0.85rem', color: 'var(--color-muted)' }}>
-                Synthesizing workspace telemetry and cross-referencing roadmaps...
-              </div>
-            </div>
+                </li>
+              ))}
+            </ul>
           )}
+        </aside>
 
-          <div ref={messagesEndRef} />
-        </div>
+        <Panel className="assistant-conversation">
+          <div className="assistant-message-stream" aria-live="polite">
+            {detailQuery.isLoading && activeId ? (
+              <PageSkeleton />
+            ) : messages.length === 0 ? (
+              <EmptyState
+                title="Ask a grounded question"
+                body="Answers cite the workspace records they were built from. Start a thread, then ask about tasks, blockers, decisions, documentation, or the team roster."
+              />
+            ) : (
+              messages.map((message) => {
+                const isUser = message.role === 'user';
+                return (
+                  <div key={message.id} className={isUser ? 'assistant-message is-user' : 'assistant-message'}>
+                    <span className="avatar small" aria-hidden="true">
+                      {isUser ? <User size={16} /> : <Bot size={16} />}
+                    </span>
 
-        {/* Prompt Suggestions */}
-        <div style={{ padding: '8px 16px', borderTop: '1px solid var(--color-border)', background: 'var(--color-surface)', display: 'flex', gap: '8px', overflowX: 'auto' }}>
-          {PROMPT_SUGGESTIONS.map((suggestion, idx) => (
-            <button
-              type="button"
-              key={idx}
-              onClick={() => handleSend(suggestion)}
-              style={{
-                padding: '4px 10px',
-                borderRadius: '12px',
-                background: 'var(--color-surface-subtle)',
-                border: '1px solid var(--color-border)',
-                color: 'var(--color-muted)',
-                fontSize: '0.75rem',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
+                    <div className="assistant-bubble">
+                      <div className="assistant-message-meta">
+                        <strong>{isUser ? user?.displayName : 'Cerberus Sentinel AI'}</strong>
+                        <span>{formatDate(message.createdAt)}</span>
+                      </div>
 
-        {/* Input Bar */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSend();
-          }}
-          style={{ padding: '12px 16px', borderTop: '1px solid var(--color-border)', display: 'flex', gap: '10px', background: 'var(--color-surface-subtle)' }}
-        >
-          <input
-            type="text"
-            value={inputPrompt}
-            onChange={(e) => setInputPrompt(e.target.value)}
-            placeholder="Ask the Sentinel AI about tasks, roadmaps, blockers, or evidence..."
-            style={{
-              flex: 1,
-              padding: '10px 14px',
-              background: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              borderRadius: '6px',
-              fontSize: '0.85rem',
-              color: 'inherit',
-            }}
-          />
-          <Button
-            type="submit"
-            variant="primary"
-            disabled={chatMutation.isPending || !inputPrompt.trim()}
+                      {isUser ? (
+                        <p className="assistant-user-text">{message.content}</p>
+                      ) : (
+                        <MarkdownRenderer content={message.content} className="assistant-markdown" />
+                      )}
+
+                      {message.toolRuns.length > 0 && (
+                        <div className="assistant-tool-runs" aria-label="Read-only tools used">
+                          {message.toolRuns.map((run) => (
+                            <span key={run.tool} className="badge" title={`${run.durationMs} ms`}>
+                              {run.label} Â· {run.resultCount}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {message.citations.length > 0 && (
+                        <div className="assistant-citations">
+                          <small>RETRIEVED SOURCES (server-read, not model-verified)</small>
+                          <div>
+                            {message.citations.map((citation) => (
+                              <Link key={`${citation.type}-${citation.id}`} to={citation.link} title={citation.snippet}>
+                                <strong>[{citation.index}]</strong> {citation.type.toUpperCase()} Â· {citation.title}
+                              </Link>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+
+            {sendMessage.isPending && (
+              <div className="assistant-message">
+                <span className="avatar small" aria-hidden="true"><Bot size={16} /></span>
+                <div className="assistant-bubble assistant-thinking">Retrieving workspace records and composing a cited answerâ€¦</div>
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </div>
+
+          <div className="assistant-suggestions">
+            {PROMPT_SUGGESTIONS.map((suggestion) => (
+              <button
+                type="button"
+                key={suggestion}
+                onClick={() => void dispatchMessage(suggestion)}
+                disabled={busy}
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+
+          {sendError && <div className="form-error" role="alert" style={{ margin: '0 16px 8px' }}>{sendError}</div>}
+
+          <form
+            className="assistant-composer"
+            onSubmit={(event) => { event.preventDefault(); void dispatchMessage(inputPrompt); }}
           >
-            <Send size={15} /> Send
-          </Button>
-        </form>
-      </Panel>
+            <input
+              type="text"
+              value={inputPrompt}
+              maxLength={8_000}
+              onChange={(event) => setInputPrompt(event.target.value)}
+              placeholder="Ask the Sentinel AI about tasks, roadmaps, blockers, or evidence..."
+              aria-label="Ask the assistant a question"
+            />
+            <Button type="submit" variant="primary" disabled={busy || !inputPrompt.trim()}>
+              <Send size={15} /> Send
+            </Button>
+          </form>
+        </Panel>
+      </div>
     </div>
   );
 }

@@ -166,6 +166,10 @@ export function AppShell() {
               </span>
             )}
           </NavLink>
+          <NavLink className="utility-link" to="/account/security">
+            <ShieldCheck size={16} />
+            <span>Security</span>
+          </NavLink>
           {mode === 'admin' && (
             <NavLink className="utility-link" to="/settings">
               <Settings size={16} />

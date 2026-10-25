@@ -1,13 +1,16 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
+import { loginMfaSchema } from '../../shared/schemas/account';
 import { activationSchema, changePasswordSchema, loginSchema, passwordResetSchema, requestPasswordResetSchema } from '../../shared/schemas/auth';
 import type { Env, Variables } from '../types';
 import { requireAuth } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { emailDeliveryConfigured, sendEmail } from '../services/email';
 import { workspaceEventStatements } from '../services/events';
+import { matchRecoveryCode, parseRecoveryHashes, verifyTotp } from '../services/mfa';
 import { consumeRateLimit, markRateLimitSuccess } from '../services/rate-limit';
-import { hashPassword, randomToken, sha256, verifyPassword } from '../services/security';
+import { hashPassword, randomToken, sha256, timingSafeCompare, verifyPassword } from '../services/security';
+import { MFA_CHALLENGE_MAX_ATTEMPTS, MFA_CHALLENGE_SECONDS, recordLoginEvent, type LoginMethod } from '../services/session-security';
 
 export const authRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 const sessionSeconds = 60 * 60 * 24 * 7;
@@ -31,7 +34,7 @@ authRoutes.post('/activate', async (context) => {
     context.env.DB.prepare(`UPDATE invitations SET accepted_at = unixepoch() WHERE id = ?`).bind(invitation.id),
     audit(context.env, invitation.user_id, 'account.activated', 'user', invitation.user_id),
   ]);
-  return createSession(context, invitation.user_id, false, 201);
+  return createSession(context, invitation.user_id, false, 201, 'password', 'account_activated');
 });
 
 authRoutes.post('/login', async (context) => {
@@ -52,8 +55,138 @@ authRoutes.post('/login', async (context) => {
   const passwordMatches = await verifyPassword(parsed.data.password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
   const valid = Boolean(user && user.archived_at === null && user.status === 'active' && user.password_hash && passwordMatches);
   if (valid) await markRateLimitSuccess(context.env, rateKey);
-  if (!valid || !user) return context.json({ ok: false, error: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' } }, 401);
-  return createSession(context, user.id, user.must_change_password === 1, 200);
+  if (!valid || !user) {
+    if (user) {
+      await recordLoginEvent(context.env, {
+        userId: user.id, success: false, method: 'password', reason: 'invalid_credentials',
+        ipHash: await sha256(address), userAgent: context.req.header('User-Agent') ?? null,
+      });
+    }
+    return context.json({ ok: false, error: { code: 'INVALID_CREDENTIALS', message: 'Email or password is incorrect' } }, 401);
+  }
+
+  const mfa = await context.env.DB.prepare(`SELECT confirmed_at FROM user_mfa WHERE user_id = ?`)
+    .bind(user.id).first<{ confirmed_at: number | null }>();
+  if (mfa?.confirmed_at) {
+    const challengeToken = randomToken(32);
+    const expiresAt = Math.floor(Date.now() / 1000) + MFA_CHALLENGE_SECONDS;
+    await context.env.DB.batch([
+      context.env.DB.prepare(`DELETE FROM login_challenges
+        WHERE user_id = ? AND (consumed_at IS NOT NULL OR expires_at < unixepoch())`).bind(user.id),
+      context.env.DB.prepare(`INSERT INTO login_challenges (id, user_id, token_hash, ip_hash, user_agent, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?)`)
+        .bind(
+          crypto.randomUUID(), user.id, await sha256(challengeToken), await sha256(address),
+          context.req.header('User-Agent') ?? null, expiresAt,
+        ),
+      audit(context.env, user.id, 'account.mfa_challenge_issued', 'user', user.id, { expiresAt }),
+    ]);
+    await recordLoginEvent(context.env, {
+      userId: user.id, success: true, method: 'password', reason: 'mfa_required',
+      ipHash: await sha256(address), userAgent: context.req.header('User-Agent') ?? null,
+    });
+    return context.json({
+      ok: true,
+      data: { mfaRequired: true, challengeToken, expiresIn: MFA_CHALLENGE_SECONDS },
+    });
+  }
+
+  return createSession(context, user.id, user.must_change_password === 1, 200, 'password');
+});
+
+authRoutes.post('/login/mfa', async (context) => {
+  const parsed = loginMfaSchema.safeParse(await context.req.json().catch(() => null));
+  if (!parsed.success) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Enter the 6-digit authenticator code or a recovery code', fields: parsed.error.flatten().fieldErrors } }, 422);
+  }
+
+  const address = context.req.header('CF-Connecting-IP') ?? 'local';
+  if (!await consumeRateLimit(context.env, `login-mfa-ip:${address}`, 200, 900)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' } }, 429);
+  }
+  const challengeHash = await sha256(parsed.data.challengeToken);
+  const rateKey = `login-mfa:${challengeHash}`;
+  if (!await consumeRateLimit(context.env, rateKey, 8, 900, true)) {
+    return context.json({ ok: false, error: { code: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' } }, 429);
+  }
+
+  const ipHash = await sha256(address);
+  const userAgent = context.req.header('User-Agent') ?? null;
+  const challenge = await context.env.DB.prepare(`SELECT c.id, c.user_id, c.ip_hash, c.attempts, c.expires_at, c.consumed_at,
+      u.status, u.must_change_password, u.archived_at,
+      m.secret, m.confirmed_at, m.last_used_step, m.recovery_codes_json
+    FROM login_challenges c
+    JOIN users u ON u.id = c.user_id
+    LEFT JOIN user_mfa m ON m.user_id = c.user_id
+    WHERE c.token_hash = ?`).bind(challengeHash).first<{
+      id: string; user_id: string; ip_hash: string; attempts: number; expires_at: number; consumed_at: number | null;
+      status: string; must_change_password: number; archived_at: number | null;
+      secret: string | null; confirmed_at: number | null; last_used_step: number | null; recovery_codes_json: string | null;
+    }>();
+
+  const now = Math.floor(Date.now() / 1000);
+  const challengeValid = Boolean(
+    challenge
+    && challenge.consumed_at === null
+    && challenge.expires_at > now
+    && challenge.attempts < MFA_CHALLENGE_MAX_ATTEMPTS
+    && challenge.status === 'active'
+    && challenge.archived_at === null
+    && challenge.confirmed_at !== null
+    && challenge.secret
+    && timingSafeCompare(challenge.ip_hash, ipHash),
+  );
+  if (!challengeValid || !challenge) {
+    return context.json({ ok: false, error: { code: 'MFA_CHALLENGE_INVALID', message: 'This verification session expired. Sign in again.' } }, 401);
+  }
+
+  let method: LoginMethod = 'mfa';
+  let step: number | null = null;
+  let remainingRecoveryHashes: string[] | null = null;
+
+  const totp = await verifyTotp(challenge.secret as string, parsed.data.code, now);
+  if (totp.valid && totp.step !== null && totp.step > (challenge.last_used_step ?? -1)) {
+    step = totp.step;
+  } else {
+    const hashes = parseRecoveryHashes(challenge.recovery_codes_json);
+    const matchedIndex = await matchRecoveryCode(parsed.data.code, hashes);
+    if (matchedIndex >= 0) {
+      method = 'recovery_code';
+      remainingRecoveryHashes = hashes.filter((_, index) => index !== matchedIndex);
+    } else {
+      await context.env.DB.batch([
+        context.env.DB.prepare(`UPDATE login_challenges SET attempts = attempts + 1 WHERE id = ?`).bind(challenge.id),
+        audit(context.env, challenge.user_id, 'account.mfa_failed', 'user', challenge.user_id, {
+          attempts: challenge.attempts + 1,
+          reason: totp.valid ? 'replayed_code' : 'invalid_code',
+        }),
+      ]);
+      await recordLoginEvent(context.env, {
+        userId: challenge.user_id, success: false, method: 'mfa',
+        reason: totp.valid ? 'replayed_code' : 'invalid_code', ipHash, userAgent,
+      });
+      return context.json({ ok: false, error: { code: 'MFA_CODE_INVALID', message: 'That verification code is not valid' } }, 401);
+    }
+  }
+
+  const statements = [
+    context.env.DB.prepare(`UPDATE login_challenges SET consumed_at = unixepoch() WHERE id = ? AND consumed_at IS NULL`)
+      .bind(challenge.id),
+    context.env.DB.prepare(`DELETE FROM login_challenges
+      WHERE user_id = ? AND (consumed_at IS NOT NULL OR expires_at < unixepoch())`).bind(challenge.user_id),
+    audit(context.env, challenge.user_id, 'account.mfa_login_succeeded', 'user', challenge.user_id, { method }),
+  ];
+  if (method === 'mfa' && step !== null) {
+    statements.push(context.env.DB.prepare(`UPDATE user_mfa SET last_used_step = ?, updated_at = unixepoch() WHERE user_id = ?`)
+      .bind(step, challenge.user_id));
+  } else if (remainingRecoveryHashes) {
+    statements.push(context.env.DB.prepare(`UPDATE user_mfa SET recovery_codes_json = ?, updated_at = unixepoch() WHERE user_id = ?`)
+      .bind(JSON.stringify(remainingRecoveryHashes), challenge.user_id));
+  }
+  await context.env.DB.batch(statements);
+  await markRateLimitSuccess(context.env, rateKey);
+
+  return createSession(context, challenge.user_id, challenge.must_change_password === 1, 200, method);
 });
 
 authRoutes.post('/request-password-reset', async (context) => {
@@ -198,7 +331,14 @@ authRoutes.post('/logout', async (context) => {
   return context.json({ ok: true, data: null });
 });
 
-async function createSession(context: Context<{ Bindings: Env; Variables: Variables }>, userId: string, mustChangePassword: boolean, status: 200 | 201) {
+async function createSession(
+  context: Context<{ Bindings: Env; Variables: Variables }>,
+  userId: string,
+  mustChangePassword: boolean,
+  status: 200 | 201,
+  method: LoginMethod = 'password',
+  reason?: string,
+) {
   const token = randomToken(32);
   const csrfToken = randomToken(24);
   const sessionId = crypto.randomUUID();
@@ -207,8 +347,12 @@ async function createSession(context: Context<{ Bindings: Env; Variables: Variab
     context.env.DB.prepare(`INSERT INTO sessions (id, user_id, token_hash, csrf_token, expires_at, user_agent, ip_hash)
       VALUES (?, ?, ?, ?, unixepoch() + ?, ?, ?)`).bind(sessionId, userId, await sha256(token), csrfToken, sessionSeconds, context.req.header('User-Agent') ?? null, ipHash),
     context.env.DB.prepare(`UPDATE users SET last_activity_at = unixepoch() WHERE id = ?`).bind(userId),
-    audit(context.env, userId, 'session.created', 'session', sessionId),
+    audit(context.env, userId, 'session.created', 'session', sessionId, { method }),
   ]);
+  await recordLoginEvent(context.env, {
+    userId, success: true, method, reason: reason ?? null,
+    ipHash, userAgent: context.req.header('User-Agent') ?? null,
+  });
   const production = context.env.APP_ENV === 'production';
   setCookie(context, production ? '__Host-cerberus_session' : 'cerberus_session', token, {
     httpOnly: true, secure: production, sameSite: 'Strict', path: '/', maxAge: sessionSeconds,

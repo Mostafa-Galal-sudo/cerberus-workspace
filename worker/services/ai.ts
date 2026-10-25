@@ -7,6 +7,7 @@ export interface AssistantContext {
   decisions: Array<Record<string, unknown>>;
   members: Array<Record<string, unknown>>;
   sources: Array<{ type: string; title: string; meta: string }>;
+  citations?: Array<{ index: number; type: string; title: string; meta: string; snippet?: string }>;
   user: { displayName: string; roles: string[] };
 }
 
@@ -24,6 +25,8 @@ const SYSTEM_PROMPT = [
   'Never invent task states, approvals, measurements, credentials, or completed work.',
   'If the context does not contain the answer, say so and name the module that should be inspected.',
   'Never claim to have executed commands or modified records.',
+  'When you use supplied citations, reference them by their bracketed index, for example [1].',
+  'Never cite a source that is not in the supplied citation list.',
 ].join(' ');
 
 async function assistantEnabled(env: Env): Promise<boolean> {

@@ -20,6 +20,7 @@ export interface Env {
   AI_API_KEY?: string;
   AI_BASE_URL?: string;
   AI_MODEL?: string;
+  SESSION_IDLE_MINUTES?: string;
 }
 
 export interface AuthUser {
