@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   GitBranch,
   GitCommit,
@@ -14,7 +16,7 @@ import { useState } from 'react';
 import { safeHttpUrl } from '../../../shared/url';
 import { useAuth } from '../../app/auth-context';
 import { Button, EmptyState, PageSkeleton, Panel } from '../../components/ui';
-import { api, ApiError, formatDate } from '../../lib/api';
+import { api, apiWithMeta, ApiError, formatDate, type PageMeta } from '../../lib/api';
 
 interface GithubStatus {
   enabled: boolean;
@@ -44,6 +46,137 @@ interface GithubStatus {
     url: string;
     created_at: number;
   }>;
+}
+
+interface PullRequestRow {
+  id: string;
+  repository: string;
+  number: number;
+  title: string;
+  url: string;
+  state: string;
+  draft: number;
+  headRef: string | null;
+  baseRef: string | null;
+  headSha: string | null;
+  checksStatus: string;
+  mergedAt: number | null;
+  updatedAt: number;
+  taskTitles: string | null;
+}
+
+interface PullRequestMeta extends PageMeta {
+  state: string;
+}
+
+const CHECKS_BADGE: Record<string, { label: string; color: string }> = {
+  success: { label: 'CI passing', color: 'var(--color-status-approved)' },
+  failure: { label: 'CI failing', color: 'var(--color-status-blocked)' },
+  pending: { label: 'CI pending', color: 'var(--color-status-progress)' },
+  neutral: { label: 'CI neutral', color: 'var(--color-silver-mid)' },
+  unknown: { label: 'CI unknown', color: 'var(--color-muted)' },
+};
+
+function PullRequestPanel() {
+  const [page, setPage] = useState(1);
+  const [state, setState] = useState('');
+  const query = useQuery({
+    queryKey: ['github-pull-requests', state, page],
+    queryFn: () => apiWithMeta<PullRequestRow[], PullRequestMeta>(
+      `/github/pull-requests?page=${page}&limit=10${state ? `&state=${state}` : ''}`,
+    ),
+  });
+
+  const rows = query.data?.data ?? [];
+  const meta = query.data?.meta;
+  const total = meta?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / 10));
+
+  return (
+    <Panel style={{ marginBottom: '24px' }}>
+      <div className="panel-heading" style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: '12px', marginBottom: '16px' }}>
+        <div>
+          <h2 style={{ fontSize: '1.1rem', margin: 0 }}>Pull request &amp; CI state</h2>
+          <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)', margin: '2px 0 0' }}>
+            Persisted from webhook deliveries and repository sync. A merge never changes the task status; it notifies the assignee that evidence can be submitted.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label htmlFor="pr-state-filter" style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>State</label>
+          <select
+            id="pr-state-filter"
+            value={state}
+            onChange={(event) => { setState(event.target.value); setPage(1); }}
+            style={{ padding: '7px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.8rem' }}
+          >
+            <option value="">All</option>
+            <option value="open">Open</option>
+            <option value="merged">Merged</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gap: '8px' }}>
+        {query.isLoading ? <PageSkeleton /> : rows.length ? rows.map((pullRequest) => {
+          const badge = CHECKS_BADGE[pullRequest.checksStatus] ?? CHECKS_BADGE.unknown;
+          const url = safeHttpUrl(pullRequest.url);
+          return (
+            <div key={pullRequest.id} style={{ padding: '10px 12px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px', display: 'grid', gap: '6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                  <GitPullRequest size={16} style={{ flexShrink: 0 }} />
+                  <span className="mono-data" style={{ fontSize: '0.78rem', flexShrink: 0 }}>#{pullRequest.number}</span>
+                  {url ? (
+                    <a href={url} target="_blank" rel="noreferrer noopener" style={{ fontSize: '0.85rem', color: 'var(--color-cyan-sentinel)', textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {pullRequest.title}
+                    </a>
+                  ) : (
+                    <span style={{ fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pullRequest.title}</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                  {pullRequest.draft === 1 && (
+                    <span className="badge" style={{ fontSize: '0.66rem' }}>Draft</span>
+                  )}
+                  <span className="badge" style={{ fontSize: '0.66rem' }}>{pullRequest.state}</span>
+                  <span style={{ fontSize: '0.68rem', fontFamily: 'JetBrains Mono, monospace', color: badge.color, border: `1px solid ${badge.color}`, borderRadius: '3px', padding: '1px 6px' }}>
+                    {badge.label}
+                  </span>
+                </div>
+              </div>
+              <small style={{ color: 'var(--color-muted)', fontSize: '0.72rem' }}>
+                {pullRequest.headRef ?? 'unknown'} → {pullRequest.baseRef ?? 'unknown'}
+                {pullRequest.headSha ? ` · ${pullRequest.headSha.slice(0, 7)}` : ''}
+                {` · updated ${formatDate(pullRequest.updatedAt)}`}
+                {pullRequest.mergedAt ? ` · merged ${formatDate(pullRequest.mergedAt)}` : ''}
+              </small>
+              <small style={{ color: 'var(--color-silver-mid)', fontSize: '0.72rem' }}>
+                Linked tasks: {pullRequest.taskTitles ?? 'none'}
+              </small>
+            </div>
+          );
+        }) : (
+          <EmptyState
+            title="No pull requests tracked"
+            body="Run a repository sync or deliver a pull_request webhook to persist PR state and CI rollups."
+          />
+        )}
+      </div>
+
+      {total > 10 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginTop: '12px' }}>
+          <Button variant="ghost" size="sm" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+            <ChevronLeft size={14} /> Previous
+          </Button>
+          <span style={{ fontSize: '0.78rem', color: 'var(--color-muted)' }}>Page {page} of {pageCount}</span>
+          <Button variant="ghost" size="sm" disabled={page >= pageCount} onClick={() => setPage((value) => value + 1)}>
+            Next <ChevronRight size={14} />
+          </Button>
+        </div>
+      )}
+    </Panel>
+  );
 }
 
 export function GithubPage() {
@@ -103,10 +236,11 @@ export function GithubPage() {
   });
 
   const syncRepository = useMutation({
-    mutationFn: () => api<{ repository: string; pullRequests: number; branches: number; linked: number }>('/github/sync', { method: 'POST' }),
+    mutationFn: () => api<{ repository: string; pullRequests: number; branches: number; linked: number; checksChecked: number }>('/github/sync', { method: 'POST' }),
     onSuccess: (result) => {
-      setActionFeedback(`Synced ${result.repository}: ${result.pullRequests} open pull request(s), ${result.branches} branch(es), ${result.linked} task link(s).`);
+      setActionFeedback(`Synced ${result.repository}: ${result.pullRequests} open pull request(s), ${result.branches} branch(es), ${result.linked} task link(s), ${result.checksChecked} CI rollup(s).`);
       void queryClient.invalidateQueries({ queryKey: ['github-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['github-pull-requests'] });
     },
     onError: (err) => setActionFeedback(err instanceof ApiError ? err.message : 'Repository sync failed'),
   });
@@ -132,6 +266,7 @@ export function GithubPage() {
       setPrDraft(false);
       setActionFeedback(`Pull request #${result.number} opened and linked to its task.`);
       void queryClient.invalidateQueries({ queryKey: ['github-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['github-pull-requests'] });
     },
     onError: (err) => setActionFeedback(err instanceof ApiError ? err.message : 'Pull request creation failed'),
   });
@@ -250,6 +385,8 @@ export function GithubPage() {
           </div>
         </Panel>
       </div>
+
+      <PullRequestPanel />
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '24px' }}>
         {/* Linked Commits & PRs */}

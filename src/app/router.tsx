@@ -13,6 +13,7 @@ import { DashboardPage } from '../features/dashboard/dashboard-page';
 import { ReviewQueuePage } from '../features/tasks/review-queue-page';
 import { TaskDetailPage } from '../features/tasks/task-detail-page';
 import { TasksPage } from '../features/tasks/tasks-page';
+import { PlanningPage } from '../features/planning/planning-page';
 import { MembersPage } from '../features/members/members-page';
 import { ChatPage } from '../features/collaboration/chat-page';
 import { AnnouncementsPage } from '../features/collaboration/announcements-page';
@@ -48,6 +49,7 @@ export const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: 'tasks', element: <TasksPage /> },
       { path: 'tasks/:taskId', element: <TaskDetailPage /> },
+      { path: 'planning', element: <PlanningPage /> },
       {
         element: <AdminGate />,
         children: [

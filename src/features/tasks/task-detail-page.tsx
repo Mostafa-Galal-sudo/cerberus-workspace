@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Check,
   Circle,
+  Clock,
   Edit3,
   GitPullRequest,
   Layers,
@@ -43,12 +44,17 @@ interface Detail {
     inputs: string;
     required_tools: string;
     expected_outputs: string;
+    start_date: number | null;
+    due_date: number | null;
+    estimate_hours: number;
   };
   checklist: Array<{ id: string; title: string; required: number; completed_at: number | null }>;
   dependencies: Array<{ id: string; title: string; status: string; priority: string }>;
   dependents?: Array<{ id: string; title: string; status: string; priority: string }>;
   submissions: Array<{ id: string; status: string; version: number; summary: string; submitted_at: number }>;
   availableTasks?: Array<{ id: string; title: string }>;
+  worklogs?: Array<{ id: string; userId: string; userName: string; workedOn: string; hours: number; note: string; createdAt: number }>;
+  worklogTotalHours?: number;
 }
 
 interface MemberOption {
@@ -67,6 +73,10 @@ interface TaskComment {
   authorId: string;
   authorName: string;
   edited: boolean;
+}
+
+function toDateInput(epoch: number | null | undefined): string {
+  return epoch ? new Date(epoch * 1000).toISOString().slice(0, 10) : '';
 }
 
 export function TaskDetailPage() {
@@ -100,6 +110,12 @@ export function TaskDetailPage() {
   const [editAcceptanceCriteria, setEditAcceptanceCriteria] = useState('');
   const [editValidationProcedure, setEditValidationProcedure] = useState('');
   const [editEvidenceRequirements, setEditEvidenceRequirements] = useState('');
+  const [editStartDate, setEditStartDate] = useState('');
+  const [editDueDate, setEditDueDate] = useState('');
+  const [editEstimateHours, setEditEstimateHours] = useState('0');
+  const [worklogDate, setWorklogDate] = useState(new Date().toISOString().slice(0, 10));
+  const [worklogHours, setWorklogHours] = useState('1');
+  const [worklogNote, setWorklogNote] = useState('');
 
   const isAdmin = Boolean(user?.roles.includes('super_admin') || user?.permissions.includes('task.manage'));
   const isSupervisor = Boolean(user?.roles.includes('project_supervisor'));
@@ -227,6 +243,9 @@ export function TaskDetailPage() {
           acceptanceCriteria: editAcceptanceCriteria,
           validationProcedure: editValidationProcedure,
           evidenceRequirements: editEvidenceRequirements,
+          startDate: editStartDate || null,
+          dueDate: editDueDate || null,
+          estimateHours: Number(editEstimateHours) || 0,
         }),
       }),
     onSuccess: () => {
@@ -235,8 +254,36 @@ export function TaskDetailPage() {
       setErrorMessage('');
       void client.invalidateQueries({ queryKey: ['task', taskId] });
       void client.invalidateQueries({ queryKey: ['tasks'] });
+      void client.invalidateQueries({ queryKey: ['planning'] });
     },
     onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Update failed'),
+  });
+
+  const addWorklog = useMutation({
+    mutationFn: () => api(`/tasks/${taskId}/worklogs`, {
+      method: 'POST',
+      body: JSON.stringify({ workedOn: worklogDate, hours: Number(worklogHours), note: worklogNote }),
+    }),
+    onSuccess: () => {
+      setWorklogNote('');
+      setWorklogHours('1');
+      setMessage('Effort logged.');
+      setErrorMessage('');
+      void client.invalidateQueries({ queryKey: ['task', taskId] });
+      void client.invalidateQueries({ queryKey: ['planning'] });
+    },
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Work log could not be recorded'),
+  });
+
+  const removeWorklog = useMutation({
+    mutationFn: (worklogId: string) => api(`/tasks/${taskId}/worklogs/${worklogId}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      setMessage('Work log entry removed.');
+      setErrorMessage('');
+      void client.invalidateQueries({ queryKey: ['task', taskId] });
+      void client.invalidateQueries({ queryKey: ['planning'] });
+    },
+    onError: (error) => setErrorMessage(error instanceof ApiError ? error.message : 'Work log entry could not be removed'),
   });
 
   const archiveTask = useMutation({
@@ -274,6 +321,9 @@ export function TaskDetailPage() {
     setEditAcceptanceCriteria(task.acceptance_criteria || '');
     setEditValidationProcedure(task.validation_procedure || '');
     setEditEvidenceRequirements(task.evidence_requirements || '');
+    setEditStartDate(toDateInput(task.start_date));
+    setEditDueDate(toDateInput(task.due_date));
+    setEditEstimateHours(String(task.estimate_hours ?? 0));
     setIsEditOpen(true);
   };
 
@@ -575,6 +625,108 @@ export function TaskDetailPage() {
             </div>
           </Panel>
 
+          <Panel>
+            <div className="panel-heading">
+              <div>
+                <h2>Effort ledger &amp; schedule</h2>
+                <p>Logged hours feed My Week, capacity planning and the dependency timeline.</p>
+              </div>
+              <Clock size={18} style={{ color: 'var(--color-silver-mid)' }} />
+            </div>
+            <div style={{ padding: '0 20px 20px', display: 'grid', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '10px' }}>
+                {[
+                  { label: 'Start date', value: task.start_date ? toDateInput(task.start_date) : 'Not scheduled' },
+                  { label: 'Due date', value: task.due_date ? toDateInput(task.due_date) : 'Not scheduled' },
+                  { label: 'Estimate', value: `${task.estimate_hours ?? 0} h` },
+                  { label: 'Logged', value: `${query.data.worklogTotalHours ?? 0} h` },
+                ].map((item) => (
+                  <div key={item.label} style={{ padding: '10px 12px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}>
+                    <small style={{ display: 'block', color: 'var(--color-muted)', marginBottom: '4px' }}>{item.label}</small>
+                    <strong style={{ fontSize: '0.85rem' }}>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+
+              {(canWork || isAdmin) && (
+                <form
+                  onSubmit={(event) => { event.preventDefault(); addWorklog.mutate(); }}
+                  aria-label="Log effort on this task"
+                  style={{ display: 'grid', gridTemplateColumns: '150px 110px 1fr auto', gap: '8px', alignItems: 'end' }}
+                >
+                  <div>
+                    <label htmlFor="worklog-date" style={{ display: 'block', fontSize: '0.75rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Work date</label>
+                    <input
+                      id="worklog-date"
+                      type="date"
+                      required
+                      value={worklogDate}
+                      max={new Date().toISOString().slice(0, 10)}
+                      onChange={(event) => setWorklogDate(event.target.value)}
+                      style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.82rem' }}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="worklog-hours" style={{ display: 'block', fontSize: '0.75rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Hours</label>
+                    <input
+                      id="worklog-hours"
+                      type="number"
+                      required
+                      min="0.25"
+                      max="24"
+                      step="0.25"
+                      value={worklogHours}
+                      onChange={(event) => setWorklogHours(event.target.value)}
+                      style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.82rem' }}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="worklog-note" style={{ display: 'block', fontSize: '0.75rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Note</label>
+                    <input
+                      id="worklog-note"
+                      type="text"
+                      maxLength={2000}
+                      placeholder="What was completed in this block?"
+                      value={worklogNote}
+                      onChange={(event) => setWorklogNote(event.target.value)}
+                      style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.82rem' }}
+                    />
+                  </div>
+                  <Button type="submit" size="sm" disabled={addWorklog.isPending}>
+                    <Plus size={14} /> {addWorklog.isPending ? 'Logging…' : 'Log hours'}
+                  </Button>
+                </form>
+              )}
+
+              {query.data.worklogs?.length ? (
+                <div style={{ display: 'grid', gap: '8px' }}>
+                  {query.data.worklogs.map((entry) => (
+                    <div key={entry.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', padding: '8px 10px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border)', borderRadius: '4px' }}>
+                      <div>
+                        <strong style={{ fontSize: '0.82rem' }}>{entry.workedOn}</strong>
+                        <span className="mono-data" style={{ marginLeft: '8px', fontSize: '0.75rem' }}>{entry.hours} h</span>
+                        <span style={{ marginLeft: '8px', color: 'var(--color-muted)', fontSize: '0.75rem' }}>{entry.userName}</span>
+                        {entry.note && <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: 'var(--color-muted)' }}>{entry.note}</p>}
+                      </div>
+                      {(entry.userId === user?.id || isAdmin) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Remove work log for ${entry.workedOn}`}
+                          onClick={() => removeWorklog.mutate(entry.id)}
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <EmptyState title="No effort logged" body="Log daily hours to keep workload and capacity views accurate." />
+              )}
+            </div>
+          </Panel>
+
           {/* Visual Dependency Gates Manager */}
           <Panel>
             <div className="panel-heading">
@@ -772,10 +924,38 @@ export function TaskDetailPage() {
       {/* Comprehensive Task Definition Editor Modal */}
       {isEditOpen && (
         <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(5, 6, 8, 0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}>
-          <div className="modal-card" style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-armor)', borderRadius: '8px', maxWidth: '780px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px', boxShadow: '0 12px 36px rgba(0,0,0,0.8)' }}>
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-task-heading"
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                event.stopPropagation();
+                setIsEditOpen(false);
+                return;
+              }
+              if (event.key !== 'Tab') return;
+              const focusables = event.currentTarget.querySelectorAll<HTMLElement>(
+                'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+              );
+              if (focusables.length === 0) return;
+              const first = focusables[0];
+              const last = focusables[focusables.length - 1];
+              if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+              } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+              }
+            }}
+            style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-armor)', borderRadius: '8px', maxWidth: '780px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px', boxShadow: '0 12px 36px rgba(0,0,0,0.8)' }}
+          >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '12px' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.25rem', color: 'var(--color-platinum-pure)' }}>Edit Task Specification</h2>
+                <h2 id="edit-task-heading" style={{ margin: 0, fontSize: '1.25rem', color: 'var(--color-platinum-pure)' }}>Edit Task Specification</h2>
                 <small style={{ color: 'var(--color-pewter)' }}>Configure technical deliverables, execution bounds, and validation gates</small>
               </div>
               <Button variant="ghost" size="sm" onClick={() => setIsEditOpen(false)}><X size={18} /></Button>
@@ -847,6 +1027,43 @@ export function TaskDetailPage() {
                           <option key={m.id} value={m.id}>{m.name} ({m.specialization || 'Engineer'})</option>
                         ))}
                       </select>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                    <div>
+                      <label htmlFor="edit-start-date" style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Start date</label>
+                      <input
+                        id="edit-start-date"
+                        type="date"
+                        value={editStartDate}
+                        onChange={(e) => setEditStartDate(e.target.value)}
+                        style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="edit-due-date" style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Due date</label>
+                      <input
+                        id="edit-due-date"
+                        type="date"
+                        value={editDueDate}
+                        min={editStartDate || undefined}
+                        onChange={(e) => setEditDueDate(e.target.value)}
+                        style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="edit-estimate" style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px', color: 'var(--color-silver-mid)' }}>Estimate (hours)</label>
+                      <input
+                        id="edit-estimate"
+                        type="number"
+                        min="0"
+                        max="10000"
+                        step="0.5"
+                        value={editEstimateHours}
+                        onChange={(e) => setEditEstimateHours(e.target.value)}
+                        style={{ width: '100%', padding: '8px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.85rem' }}
+                      />
                     </div>
                   </div>
 

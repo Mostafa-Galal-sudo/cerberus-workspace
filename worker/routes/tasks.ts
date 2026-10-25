@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
 import { createTaskSchema, submissionSchema, updateTaskSchema, updateTaskStatusSchema } from '../../shared/schemas/tasks';
+import { taskWorklogSchema } from '../../shared/schemas/planning';
+import { addDaysDateOnly, dateOnlyToEpoch, todayDateOnly } from '../../shared/schemas/dates';
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
 import { workspaceEventStatements } from '../services/events';
+import { isPlanningAdmin, isPlanningObserver } from '../services/planning';
 import type { Env, Variables } from '../types';
 
 export const taskRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -165,7 +168,9 @@ taskRoutes.get('/', async (context) => {
 
   const where = conditions.join(' AND ');
   const rows = await context.env.DB.prepare(`SELECT t.id, t.title, t.description, t.priority, t.status, t.assignee_id AS assigneeId,
-      t.domain_id AS domainId, t.updated_at AS updatedAt, u.display_name AS assigneeName, d.name AS domainName,
+      t.domain_id AS domainId, t.start_date AS startDate, t.due_date AS dueDate, t.estimate_hours AS estimateHours,
+      t.updated_at AS updatedAt, u.display_name AS assigneeName, d.name AS domainName,
+      (SELECT COALESCE(SUM(w.hours), 0) FROM task_worklogs w WHERE w.task_id = t.id) AS loggedHours,
       (SELECT COUNT(*) FROM task_checklist_items c WHERE c.task_id=t.id) AS checklistTotal,
       (SELECT COUNT(*) FROM task_checklist_items c WHERE c.task_id=t.id AND c.completed_at IS NOT NULL) AS checklistDone,
       (SELECT COUNT(*) FROM task_dependencies td WHERE td.task_id=t.id) AS dependencyCount
@@ -183,14 +188,21 @@ taskRoutes.get('/:id', async (context) => {
     WHERE t.id=? AND t.archived_at IS NULL`).bind(context.req.param('id')).first();
   if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
 
-  const [checklist, dependencies, dependents, submissions, availableTasks] = await Promise.all([
+  const [checklist, dependencies, dependents, submissions, availableTasks, worklogs] = await Promise.all([
     context.env.DB.prepare(`SELECT * FROM task_checklist_items WHERE task_id=? ORDER BY sort_order`).bind(context.req.param('id')).all(),
     context.env.DB.prepare(`SELECT t.id, t.title, t.status, t.priority FROM task_dependencies td JOIN tasks t ON t.id=td.depends_on_task_id WHERE td.task_id=?`).bind(context.req.param('id')).all(),
     context.env.DB.prepare(`SELECT t.id, t.title, t.status, t.priority FROM task_dependencies td JOIN tasks t ON t.id=td.task_id WHERE td.depends_on_task_id=? AND t.archived_at IS NULL`).bind(context.req.param('id')).all(),
     context.env.DB.prepare(`SELECT s.*, u.display_name AS submitted_by_name FROM submissions s JOIN users u ON u.id=s.submitted_by WHERE s.task_id=? ORDER BY s.version DESC`).bind(context.req.param('id')).all(),
     context.env.DB.prepare(`SELECT t.id, t.title FROM tasks t WHERE t.id <> ? AND t.archived_at IS NULL ORDER BY t.title LIMIT 100`).bind(context.req.param('id')).all(),
+    context.env.DB.prepare(`SELECT w.id, w.user_id AS userId, u.display_name AS userName, w.worked_on AS workedOn,
+        w.hours, w.note, w.created_at AS createdAt
+      FROM task_worklogs w JOIN users u ON u.id = w.user_id
+      WHERE w.task_id = ? ORDER BY w.worked_on DESC, w.created_at DESC LIMIT 100`).bind(context.req.param('id')).all<{
+        id: string; userId: string; userName: string; workedOn: string; hours: number; note: string; createdAt: number;
+      }>(),
   ]);
 
+  const worklogRows = worklogs.results;
   return context.json({
     ok: true,
     data: {
@@ -200,6 +212,8 @@ taskRoutes.get('/:id', async (context) => {
       dependents: dependents.results,
       submissions: submissions.results,
       availableTasks: availableTasks.results,
+      worklogs: worklogRows,
+      worklogTotalHours: Math.round(worklogRows.reduce((sum, entry) => sum + entry.hours, 0) * 100) / 100,
     },
   });
 });
@@ -221,15 +235,22 @@ taskRoutes.post('/', requirePermission('task.manage'), async (context) => {
     context.env.DB.prepare(`INSERT INTO tasks
       (id, project_id, domain_id, assignee_id, parent_task_id, created_by, title, description, prerequisites, inputs,
        implementation_steps, required_tools, expected_outputs, deliverables, acceptance_criteria, validation_procedure,
-       evidence_requirements, priority)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       evidence_requirements, priority, start_date, due_date, estimate_hours)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(id, input.projectId, domainId, assigneeId, parentTaskId,
         context.get('user').id, input.title, input.description, input.prerequisites, input.inputs, input.implementationSteps,
         input.requiredTools, input.expectedOutputs, input.deliverables, input.acceptanceCriteria, input.validationProcedure,
-        input.evidenceRequirements, input.priority),
+        input.evidenceRequirements, input.priority,
+        input.startDate ? dateOnlyToEpoch(input.startDate) : null,
+        input.dueDate ? dateOnlyToEpoch(input.dueDate) : null,
+        input.estimateHours ?? 0),
     context.env.DB.prepare(`INSERT INTO progress_events (id, project_id, user_id, event_type, resource_type, resource_id, total_delta, actor_id)
       VALUES (?, ?, ?, 'task.created', 'task', ?, 1, ?)`).bind(crypto.randomUUID(), input.projectId, assigneeId, id, context.get('user').id),
-    audit(context.env, context.get('user').id, 'task.created', 'task', id),
+    audit(context.env, context.get('user').id, 'task.created', 'task', id, {
+      startDate: input.startDate ?? null,
+      dueDate: input.dueDate ?? null,
+      estimateHours: input.estimateHours ?? 0,
+    }),
   ];
 
   if (assigneeId) {
@@ -258,7 +279,8 @@ taskRoutes.post('/', requirePermission('task.manage'), async (context) => {
 
 taskRoutes.patch('/:id', requirePermission('task.manage'), async (context) => {
   const taskId = context.req.param('id');
-  const task = await context.env.DB.prepare(`SELECT id, title, assignee_id FROM tasks WHERE id=? AND archived_at IS NULL`).bind(taskId).first<{ id: string; title: string; assignee_id: string | null }>();
+  const task = await context.env.DB.prepare(`SELECT id, title, assignee_id, start_date, due_date FROM tasks WHERE id=? AND archived_at IS NULL`)
+    .bind(taskId).first<{ id: string; title: string; assignee_id: string | null; start_date: number | null; due_date: number | null }>();
   if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
 
   const parsed = updateTaskSchema.safeParse(await context.req.json().catch(() => null));
@@ -282,12 +304,25 @@ taskRoutes.patch('/:id', requirePermission('task.manage'), async (context) => {
     acceptanceCriteria: 'acceptance_criteria',
     validationProcedure: 'validation_procedure',
     evidenceRequirements: 'evidence_requirements',
+    startDate: 'start_date',
+    dueDate: 'due_date',
+    estimateHours: 'estimate_hours',
   };
 
   const hasAssignee = values.assigneeId !== undefined;
   const nextAssignee = hasAssignee ? (typeof values.assigneeId === 'string' ? values.assigneeId.trim() || null : null) : task.assignee_id;
   if (hasAssignee && nextAssignee && !await eligibleAssignee(context.env.DB, nextAssignee)) {
     return context.json({ ok: false, error: { code: 'INVALID_ASSIGNEE', message: 'Tasks can only be assigned to active working members' } }, 422);
+  }
+
+  const nextStart = values.startDate === undefined
+    ? task.start_date
+    : (values.startDate ? dateOnlyToEpoch(String(values.startDate)) : null);
+  const nextDue = values.dueDate === undefined
+    ? task.due_date
+    : (values.dueDate ? dateOnlyToEpoch(String(values.dueDate)) : null);
+  if (nextStart !== null && nextDue !== null && nextDue < nextStart) {
+    return context.json({ ok: false, error: { code: 'INVALID_SCHEDULE', message: 'Due date cannot precede the start date' } }, 422);
   }
 
   const updates: string[] = [];
@@ -298,6 +333,8 @@ taskRoutes.patch('/:id', requirePermission('task.manage'), async (context) => {
     updates.push(`${column} = ?`);
     if (key === 'assigneeId') binds.push(nextAssignee);
     else if (key === 'domainId') binds.push(typeof values[key] === 'string' ? values[key].trim() || null : null);
+    else if (key === 'startDate') binds.push(nextStart);
+    else if (key === 'dueDate') binds.push(nextDue);
     else binds.push(values[key]);
   }
 
@@ -328,6 +365,99 @@ taskRoutes.patch('/:id', requirePermission('task.manage'), async (context) => {
   await context.env.DB.batch(statements);
 
   return context.json({ ok: true, data: { updated: true } });
+});
+
+taskRoutes.get('/:id/worklogs', async (context) => {
+  const taskId = context.req.param('id');
+  const task = await context.env.DB.prepare(`SELECT id, title, assignee_id FROM tasks WHERE id=? AND archived_at IS NULL`)
+    .bind(taskId).first<{ id: string; title: string; assignee_id: string | null }>();
+  if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
+
+  const page = Math.max(1, Number(context.req.query('page') ?? 1));
+  const limit = Math.min(100, Math.max(1, Number(context.req.query('limit') ?? 50)));
+  const [rows, total, mine] = await Promise.all([
+    context.env.DB.prepare(`SELECT w.id, w.task_id AS taskId, w.user_id AS userId, u.display_name AS userName,
+        w.worked_on AS workedOn, w.hours, w.note, w.created_at AS createdAt
+      FROM task_worklogs w JOIN users u ON u.id = w.user_id
+      WHERE w.task_id = ? ORDER BY w.worked_on DESC, w.created_at DESC LIMIT ? OFFSET ?`)
+      .bind(taskId, limit, (page - 1) * limit).all(),
+    context.env.DB.prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(hours), 0) AS hours FROM task_worklogs WHERE task_id=?`)
+      .bind(taskId).first<{ count: number; hours: number }>(),
+    context.env.DB.prepare(`SELECT COALESCE(SUM(hours), 0) AS hours FROM task_worklogs WHERE task_id=? AND user_id=?`)
+      .bind(taskId, context.get('user').id).first<{ hours: number }>(),
+  ]);
+
+  return context.json({
+    ok: true,
+    data: rows.results,
+    meta: {
+      page,
+      limit,
+      total: total?.count ?? 0,
+      hasMore: page * limit < (total?.count ?? 0),
+      totalHours: Math.round((total?.hours ?? 0) * 100) / 100,
+      myHours: Math.round((mine?.hours ?? 0) * 100) / 100,
+    },
+  });
+});
+
+taskRoutes.post('/:id/worklogs', async (context) => {
+  const taskId = context.req.param('id');
+  const task = await context.env.DB.prepare(`SELECT id, title, assignee_id FROM tasks WHERE id=? AND archived_at IS NULL`)
+    .bind(taskId).first<{ id: string; title: string; assignee_id: string | null }>();
+  if (!task) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Task not found' } }, 404);
+
+  const user = context.get('user');
+  const admin = isPlanningAdmin(user);
+  if (isPlanningObserver(user) && !admin) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Supervisors have read-only access to work logs' } }, 403);
+  }
+  if (task.assignee_id !== user.id && !admin) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the assignee or an administrator can log effort on this task' } }, 403);
+  }
+
+  const parsed = taskWorklogSchema.safeParse(await context.req.json().catch(() => null));
+  if (!parsed.success) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Work log details are invalid', fields: parsed.error.flatten().fieldErrors } }, 422);
+  }
+  const { workedOn, hours, note } = parsed.data;
+  if (workedOn > addDaysDateOnly(todayDateOnly(), 1)) {
+    return context.json({ ok: false, error: { code: 'FUTURE_WORKLOG', message: 'Effort cannot be logged for a future date' } }, 422);
+  }
+
+  const sameDay = await context.env.DB.prepare(`SELECT COALESCE(SUM(hours), 0) AS hours FROM task_worklogs WHERE user_id=? AND worked_on=?`)
+    .bind(user.id, workedOn).first<{ hours: number }>();
+  if ((sameDay?.hours ?? 0) + hours > 24) {
+    return context.json({ ok: false, error: { code: 'DAILY_HOURS_EXCEEDED', message: 'A member cannot log more than 24 hours in one day' } }, 422);
+  }
+
+  const id = crypto.randomUUID();
+  await context.env.DB.batch([
+    context.env.DB.prepare(`INSERT INTO task_worklogs (id, task_id, user_id, worked_on, hours, note) VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(id, taskId, user.id, workedOn, hours, note),
+    audit(context.env, user.id, 'task.worklog_added', 'task', taskId, { worklogId: id, workedOn, hours }),
+  ]);
+
+  return context.json({ ok: true, data: { id, workedOn, hours } }, 201);
+});
+
+taskRoutes.delete('/:id/worklogs/:worklogId', async (context) => {
+  const taskId = context.req.param('id');
+  const worklog = await context.env.DB.prepare(`SELECT id, user_id FROM task_worklogs WHERE id=? AND task_id=?`)
+    .bind(context.req.param('worklogId'), taskId).first<{ id: string; user_id: string }>();
+  if (!worklog) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Work log entry not found' } }, 404);
+
+  const user = context.get('user');
+  if (worklog.user_id !== user.id && !isPlanningAdmin(user)) {
+    return context.json({ ok: false, error: { code: 'FORBIDDEN', message: 'Only the author or an administrator can remove this entry' } }, 403);
+  }
+
+  await context.env.DB.batch([
+    context.env.DB.prepare(`DELETE FROM task_worklogs WHERE id=?`).bind(worklog.id),
+    audit(context.env, user.id, 'task.worklog_removed', 'task', taskId, { worklogId: worklog.id }),
+  ]);
+
+  return context.json({ ok: true, data: { deleted: true } });
 });
 
 taskRoutes.delete('/:id', requirePermission('task.manage'), async (context) => {

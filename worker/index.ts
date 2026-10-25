@@ -8,6 +8,7 @@ import { authRoutes } from './routes/auth';
 import { collaborationRoutes } from './routes/collaboration';
 import { dashboardRoutes } from './routes/dashboard';
 import { githubRoutes } from './routes/github';
+import { planningRoutes } from './routes/planning';
 import { reviewRoutes } from './routes/reviews';
 import { reportRoutes } from './routes/reports';
 import { searchRoutes } from './routes/search';
@@ -15,6 +16,7 @@ import { setupRoutes } from './routes/setup';
 import { taskRoutes } from './routes/tasks';
 import { userRoutes } from './routes/users';
 import { workspaceModuleRoutes } from './routes/workspace-modules';
+import { runScheduledDigests } from './services/notifications';
 import type { Env, Variables } from './types';
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -60,6 +62,7 @@ app.route('/api/v1/setup', setupRoutes);
 app.route('/api/v1/auth', authRoutes);
 app.route('/api/v1/dashboard', dashboardRoutes);
 app.route('/api/v1/tasks', taskRoutes);
+app.route('/api/v1/planning', planningRoutes);
 app.route('/api/v1/reviews', reviewRoutes);
 app.route('/api/v1/reports', reportRoutes);
 app.route('/api/v1/search', searchRoutes);
@@ -93,5 +96,6 @@ export default Object.assign(app, {
     } catch (error) {
       console.error(JSON.stringify({ level: 'error', service: 'scheduled-cleanup', message: error instanceof Error ? error.message : 'unknown' }));
     }
+    await runScheduledDigests(env);
   },
 });

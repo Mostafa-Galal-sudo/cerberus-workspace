@@ -4,6 +4,7 @@ import {
   Bell,
   BookOpen,
   Bot,
+  CalendarDays,
   CheckSquare2,
   ClipboardCheck,
   Cpu,
@@ -71,6 +72,7 @@ export function AppShell() {
   const links = [
     { to: '/', label: 'Overview', icon: LayoutDashboard },
     { to: '/tasks', label: mode === 'admin' ? 'Task register' : 'Discipline tasks', icon: CheckSquare2 },
+    { to: '/planning', label: 'Planning & capacity', icon: CalendarDays },
   ];
 
   if (mode === 'admin') {

@@ -45,6 +45,22 @@
   --color-status-progress-bg: #201910;
   --color-status-progress-border: #4a3821;
 
+  /* Legacy component aliases resolved onto the restrained palette. Components
+     written against the earlier token names keep working without new hues. */
+  --color-border: var(--color-border-subtle);
+  --color-border-accent: var(--color-border-chiseled);
+  --color-text: var(--color-silver-light);
+  --color-muted: var(--color-pewter);
+  --color-surface: var(--color-surface-graphite);
+  --color-surface-subtle: var(--color-surface-elevated);
+  --color-cyan-sentinel: var(--color-silver-light);
+  --color-status-approved: var(--color-status-verified);
+  --color-status-pending: var(--color-status-review);
+  --color-magma-flame: var(--color-status-blocked);
+  --color-magma-amber: var(--color-status-progress);
+  --color-magma-border: var(--color-status-blocked-border);
+  --color-matrix-emerald: var(--color-status-verified);
+
   background: var(--color-charcoal-deep);
   color: var(--color-silver-light);
 }

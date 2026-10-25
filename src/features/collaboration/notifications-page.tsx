@@ -6,14 +6,17 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Mail,
   MessageSquare,
+  Send,
+  Settings2,
   ShieldAlert,
   ShieldCheck,
 } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, EmptyState, PageSkeleton, Panel } from '../../components/ui';
-import { api, apiWithMeta, formatDate, type PageMeta } from '../../lib/api';
+import { api, apiWithMeta, ApiError, formatDate, type PageMeta } from '../../lib/api';
 
 interface NotificationItem {
   id: string;
@@ -134,6 +137,8 @@ export function NotificationsPage() {
           )}
         </div>
       </header>
+
+      <NotificationPreferencesPanel />
 
       <Panel className="task-toolbar notification-toolbar">
         <div style={{ display: 'flex', gap: '8px' }} role="group" aria-label="Notification status filter">
@@ -262,5 +267,165 @@ export function NotificationsPage() {
         />
       )}
     </div>
+  );
+}
+
+type PreferenceCategory = 'task' | 'review' | 'collaboration' | 'account' | 'digest';
+
+interface PreferencePayload {
+  categories: Array<{ category: PreferenceCategory; inApp: boolean; email: boolean }>;
+  digestFrequency: 'off' | 'daily' | 'weekly';
+}
+
+interface DigestResult {
+  id: string;
+  itemCount: number;
+  status: 'created' | 'emailed' | 'skipped' | 'failed';
+  created: boolean;
+  emailProvider: string;
+  reason?: string;
+}
+
+const CATEGORY_LABELS: Record<PreferenceCategory, string> = {
+  task: 'Task assignments and schedule changes',
+  review: 'Review requests and decisions',
+  collaboration: 'Team stream, announcements and mentions',
+  account: 'Account and security notices',
+  digest: 'Digest email summaries',
+};
+
+function NotificationPreferencesPanel() {
+  const query = useQuery({
+    queryKey: ['notification-preferences'],
+    queryFn: () => apiWithMeta<PreferencePayload, { emailConfigured: boolean }>('/collaboration/notifications/preferences'),
+  });
+
+  if (query.isLoading || !query.data) return null;
+  return <PreferencesForm initial={query.data.data} emailConfigured={query.data.meta.emailConfigured} />;
+}
+
+function PreferencesForm({ initial, emailConfigured }: { initial: PreferencePayload; emailConfigured: boolean }) {
+  const client = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [categories, setCategories] = useState(initial.categories);
+  const [digestFrequency, setDigestFrequency] = useState(initial.digestFrequency);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const toggle = (category: PreferenceCategory, channel: 'inApp' | 'email', value: boolean) => {
+    setCategories((current) => current.map((entry) => (
+      entry.category === category ? { ...entry, [channel]: value } : entry
+    )));
+  };
+
+  const save = useMutation({
+    mutationFn: () => api<PreferencePayload>('/collaboration/notifications/preferences', {
+      method: 'PUT',
+      body: JSON.stringify({
+        categories: Object.fromEntries(categories.map((entry) => [entry.category, { inApp: entry.inApp, email: entry.email }])),
+        digestFrequency,
+      }),
+    }),
+    onSuccess: () => {
+      setMessage('Notification preferences saved.');
+      setError('');
+      void client.invalidateQueries({ queryKey: ['notification-preferences'] });
+      void client.invalidateQueries({ queryKey: ['notifications'] });
+    },
+    onError: (cause) => setError(cause instanceof ApiError ? cause.message : 'Preferences could not be saved'),
+  });
+
+  const digest = useMutation({
+    mutationFn: () => api<DigestResult>('/collaboration/notifications/digest', {
+      method: 'POST',
+      body: JSON.stringify({ frequency: digestFrequency === 'off' ? 'daily' : digestFrequency }),
+    }),
+    onSuccess: (result) => {
+      const status = result.status === 'emailed'
+        ? `Digest emailed via ${result.emailProvider}.`
+        : result.status === 'skipped'
+          ? `Digest prepared but not emailed (${result.reason ?? 'email unavailable'}).`
+          : result.status === 'failed'
+            ? 'Digest prepared but email delivery failed.'
+            : 'Digest prepared.';
+      setMessage(`${result.created ? '' : 'Digest already exists for this window. '}${result.itemCount} unread notification(s). ${status}`);
+      setError('');
+    },
+    onError: (cause) => setError(cause instanceof ApiError ? cause.message : 'Digest could not be generated'),
+  });
+
+  return (
+    <Panel>
+      <div className="panel-heading">
+        <div>
+          <h2>Delivery preferences</h2>
+          <p>Choose which categories reach the in-app inbox and which may be emailed.</p>
+        </div>
+        <Button variant="ghost" size="sm" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          <Settings2 size={15} /> {open ? 'Hide' : 'Configure'}
+        </Button>
+      </div>
+
+      {open && (
+        <div style={{ padding: '0 20px 20px', display: 'grid', gap: '14px' }}>
+          <fieldset style={{ border: '1px solid var(--color-border)', borderRadius: '4px', padding: '10px 12px', display: 'grid', gap: '8px' }}>
+            <legend style={{ padding: '0 6px', fontSize: '0.78rem', color: 'var(--color-silver-mid)' }}>Notification categories</legend>
+            {categories.map((entry) => (
+              <div key={entry.category} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px', gap: '8px', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.82rem' }}>{CATEGORY_LABELS[entry.category]}</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+                  <input
+                    type="checkbox"
+                    checked={entry.inApp}
+                    onChange={(event) => toggle(entry.category, 'inApp', event.target.checked)}
+                    aria-label={`${CATEGORY_LABELS[entry.category]} in-app`}
+                  />
+                  In-app
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+                  <input
+                    type="checkbox"
+                    checked={entry.email}
+                    onChange={(event) => toggle(entry.category, 'email', event.target.checked)}
+                    aria-label={`${CATEGORY_LABELS[entry.category]} email`}
+                  />
+                  Email
+                </label>
+              </div>
+            ))}
+          </fieldset>
+
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'end', flexWrap: 'wrap' }}>
+            <label style={{ display: 'grid', gap: '4px', fontSize: '0.75rem', color: 'var(--color-silver-mid)' }}>
+              Digest frequency
+              <select
+                value={digestFrequency}
+                onChange={(event) => setDigestFrequency(event.target.value as PreferencePayload['digestFrequency'])}
+                style={{ padding: '7px', background: 'var(--color-surface-subtle)', border: '1px solid var(--color-border-armor)', borderRadius: '4px', color: 'inherit', fontSize: '0.82rem' }}
+              >
+                <option value="off">Off</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly (Mondays)</option>
+              </select>
+            </label>
+
+            <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
+              <Check size={14} /> {save.isPending ? 'Saving…' : 'Save preferences'}
+            </Button>
+            <Button variant="secondary" size="sm" disabled={digest.isPending} onClick={() => digest.mutate()}>
+              <Send size={14} /> {digest.isPending ? 'Preparing…' : 'Send digest now'}
+            </Button>
+
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.72rem', color: emailConfigured ? 'var(--color-muted)' : 'var(--color-status-progress)' }}>
+              <Mail size={13} />
+              {emailConfigured ? 'Email provider configured' : 'Email provider not configured — digests stay in-app'}
+            </span>
+          </div>
+
+          {message && <p role="status" style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-status-verified)' }}>{message}</p>}
+          {error && <p role="alert" className="form-error" style={{ margin: 0 }}>{error}</p>}
+        </div>
+      )}
+    </Panel>
   );
 }

@@ -9,8 +9,21 @@ export interface GithubPullRequest {
   title: string;
   body?: string | null;
   state: string;
-  head?: { ref: string };
+  draft?: boolean;
+  merged?: boolean;
+  merged_at?: string | null;
+  head?: { ref: string; sha?: string };
   base?: { ref: string };
+}
+
+export type GithubChecksStatus = 'unknown' | 'pending' | 'success' | 'failure' | 'neutral';
+
+export interface GithubChecksRollup {
+  status: GithubChecksStatus;
+  total: number;
+  failing: number;
+  pending: number;
+  detail: string;
 }
 
 export interface GithubRepositorySummary {
@@ -148,4 +161,49 @@ export async function syncRepository(env: Env, repository: string): Promise<Gith
 
 export function extractTaskIds(text: string): string[] {
   return [...new Set(text.match(/task_[a-zA-Z0-9_-]+/g) ?? [])];
+}
+
+interface GithubCheckRun {
+  status?: string;
+  conclusion?: string | null;
+}
+
+/**
+ * Collapses a commit's check runs into one rollup. Kept separate from
+ * `syncRepository` so the repository sync contract stays at three calls and
+ * check lookups can fail without failing the whole sync.
+ */
+export async function fetchChecksRollup(env: Env, repository: string, ref: string): Promise<GithubChecksRollup> {
+  const response = await githubFetch(env, `/repos/${repository}/commits/${encodeURIComponent(ref)}/check-runs?per_page=100`);
+  const body = await response.json() as { total_count?: number; check_runs?: GithubCheckRun[] };
+  const runs = Array.isArray(body.check_runs) ? body.check_runs : [];
+  const total = typeof body.total_count === 'number' ? body.total_count : runs.length;
+
+  if (total === 0 || runs.length === 0) {
+    return { status: 'unknown', total, failing: 0, pending: 0, detail: 'No check runs reported' };
+  }
+
+  let failing = 0;
+  let pending = 0;
+  let neutral = 0;
+  for (const run of runs) {
+    if (run.status !== 'completed') { pending += 1; continue; }
+    if (['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure'].includes(run.conclusion ?? '')) failing += 1;
+    else if (['neutral', 'skipped', 'stale'].includes(run.conclusion ?? '')) neutral += 1;
+  }
+
+  const status: GithubChecksStatus = failing > 0
+    ? 'failure'
+    : pending > 0
+      ? 'pending'
+      : neutral > 0
+        ? 'neutral'
+        : 'success';
+  return {
+    status,
+    total,
+    failing,
+    pending,
+    detail: `${runs.length} check run(s): ${failing} failing, ${pending} pending`,
+  };
 }

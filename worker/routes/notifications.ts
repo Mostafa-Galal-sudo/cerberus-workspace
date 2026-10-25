@@ -1,5 +1,14 @@
 import { Hono } from 'hono';
+import { notificationPreferencesSchema } from '../../shared/schemas/planning';
 import { requireAuth, requirePasswordChanged } from '../middleware/auth';
+import { audit } from '../services/audit';
+import { emailDeliveryConfigured } from '../services/email';
+import {
+  NOTIFICATION_CATEGORIES,
+  createDigest,
+  notificationCategorySql,
+  readNotificationPreferences,
+} from '../services/notifications';
 import type { AuthUser, Env, Variables } from '../types';
 
 interface NotificationRow {
@@ -24,19 +33,22 @@ notificationRoutes.get('/', async (context) => {
   const requestedType = context.req.query('type')?.trim();
   const type = requestedType && requestedType.length <= 80 ? requestedType : null;
 
-  const conditions = ['user_id = ?'];
+  const categorySql = notificationCategorySql('n.type');
+  const visibleSql = `COALESCE((SELECT np.in_app FROM notification_preferences np
+    WHERE np.user_id = n.user_id AND np.category = ${categorySql}), 1) = 1`;
+  const conditions = ['n.user_id = ?', visibleSql];
   const bindings: unknown[] = [user.id];
-  if (status === 'unread') conditions.push('read_at IS NULL');
-  if (type) { conditions.push('type = ?'); bindings.push(type); }
+  if (status === 'unread') conditions.push('n.read_at IS NULL');
+  if (type) { conditions.push('n.type = ?'); bindings.push(type); }
   const where = conditions.join(' AND ');
 
   const [rows, total, unread] = await Promise.all([
-    context.env.DB.prepare(`SELECT id, type, title, body, resource_type, resource_id, read_at, created_at
-      FROM notifications WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`)
+    context.env.DB.prepare(`SELECT n.id, n.type, n.title, n.body, n.resource_type, n.resource_id, n.read_at, n.created_at
+      FROM notifications n WHERE ${where} ORDER BY n.created_at DESC, n.id DESC LIMIT ? OFFSET ?`)
       .bind(...bindings, limit, (page - 1) * limit).all<NotificationRow>(),
-    context.env.DB.prepare(`SELECT COUNT(*) AS count FROM notifications WHERE ${where}`)
+    context.env.DB.prepare(`SELECT COUNT(*) AS count FROM notifications n WHERE ${where}`)
       .bind(...bindings).first<{ count: number }>(),
-    context.env.DB.prepare(`SELECT COUNT(*) AS count FROM notifications WHERE user_id=? AND read_at IS NULL`)
+    context.env.DB.prepare(`SELECT COUNT(*) AS count FROM notifications n WHERE n.user_id=? AND n.read_at IS NULL AND ${visibleSql}`)
       .bind(user.id).first<{ count: number }>(),
   ]);
 
@@ -55,9 +67,68 @@ notificationRoutes.get('/', async (context) => {
 });
 
 notificationRoutes.get('/unread-count', async (context) => {
-  const row = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM notifications WHERE user_id=? AND read_at IS NULL`)
+  const categorySql = notificationCategorySql('n.type');
+  const row = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM notifications n
+    WHERE n.user_id=? AND n.read_at IS NULL AND COALESCE((SELECT np.in_app FROM notification_preferences np
+      WHERE np.user_id = n.user_id AND np.category = ${categorySql}), 1) = 1`)
     .bind(context.get('user').id).first<{ count: number }>();
   return context.json({ ok: true, data: { count: row?.count ?? 0 } });
+});
+
+notificationRoutes.get('/preferences', async (context) => {
+  const preferences = await readNotificationPreferences(context.env.DB, context.get('user').id);
+  return context.json({
+    ok: true,
+    data: preferences,
+    meta: { emailConfigured: emailDeliveryConfigured(context.env) },
+  });
+});
+
+notificationRoutes.put('/preferences', async (context) => {
+  const parsed = notificationPreferencesSchema.safeParse(await context.req.json().catch(() => null));
+  if (!parsed.success) {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Notification preferences are invalid', fields: parsed.error.flatten().fieldErrors } }, 422);
+  }
+
+  const user = context.get('user');
+  const provided = parsed.data.categories;
+  const defaults = await readNotificationPreferences(context.env.DB, user.id);
+  const statements: D1PreparedStatement[] = [];
+
+  for (const category of NOTIFICATION_CATEGORIES) {
+    const existingDefault = defaults.categories.find((entry) => entry.category === category);
+    const value = provided[category] ?? { inApp: existingDefault?.inApp ?? true, email: existingDefault?.email ?? false };
+    statements.push(context.env.DB.prepare(`INSERT INTO notification_preferences (user_id, category, in_app, email, updated_at)
+      VALUES (?, ?, ?, ?, unixepoch())
+      ON CONFLICT(user_id, category) DO UPDATE SET in_app=excluded.in_app, email=excluded.email, updated_at=unixepoch()`)
+      .bind(user.id, category, value.inApp ? 1 : 0, value.email ? 1 : 0));
+  }
+
+  statements.push(context.env.DB.prepare(`INSERT INTO notification_settings (user_id, digest_frequency, updated_at)
+    VALUES (?, ?, unixepoch())
+    ON CONFLICT(user_id) DO UPDATE SET digest_frequency=excluded.digest_frequency, updated_at=unixepoch()`)
+    .bind(user.id, parsed.data.digestFrequency));
+  statements.push(audit(context.env, user.id, 'notification.preferences_updated', 'user', user.id, {
+    digestFrequency: parsed.data.digestFrequency,
+  }));
+
+  await context.env.DB.batch(statements);
+  const preferences = await readNotificationPreferences(context.env.DB, user.id);
+  return context.json({ ok: true, data: preferences });
+});
+
+notificationRoutes.post('/digest', async (context) => {
+  const user = context.get('user');
+  const body = await context.req.json<{ frequency?: string }>().catch(() => ({} as { frequency?: string }));
+  const requested = body.frequency ?? null;
+  if (requested !== null && requested !== 'daily' && requested !== 'weekly') {
+    return context.json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'Digest frequency must be daily or weekly' } }, 422);
+  }
+
+  const preferences = await readNotificationPreferences(context.env.DB, user.id);
+  const frequency = requested ?? (preferences.digestFrequency === 'off' ? 'daily' : preferences.digestFrequency);
+  const digest = await createDigest(context.env, user.id, { frequency });
+  return context.json({ ok: true, data: digest });
 });
 
 notificationRoutes.post('/read-all', async (context) => {

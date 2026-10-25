@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { safeHttpUrl } from '../../shared/url';
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
-import { createPullRequest, extractTaskIds, githubAuthMode, GithubApiError, syncRepository } from '../services/github';
+import { createPullRequest, extractTaskIds, fetchChecksRollup, githubAuthMode, GithubApiError, syncRepository, type GithubChecksRollup } from '../services/github';
 import { consumeRateLimit } from '../services/rate-limit';
 import { verifyGithubSignature } from '../services/security';
 import type { Env, Variables } from '../types';
@@ -152,12 +152,17 @@ githubRoutes.post('/webhook', async (context) => {
     }
   }
 
-  if (eventType === 'pull_request' && typeof payload.pull_request === 'object' && payload.pull_request !== null) {
-    const pr = payload.pull_request as Record<string, unknown>;
-    const title = typeof pr.title === 'string' ? pr.title : '';
-    const body = typeof pr.body === 'string' ? pr.body : '';
-    const pullRequestUrl = safeHttpUrl(pr.html_url);
-    const pullRequestId = typeof pr.id === 'number' || typeof pr.id === 'string' ? String(pr.id).slice(0, 120) : '';
+  const repositoryName = deliveredRepository ?? configuredRepository ?? '';
+  const pullRequest = eventType === 'pull_request' && typeof payload.pull_request === 'object' && payload.pull_request !== null
+    ? payload.pull_request as Record<string, unknown>
+    : null;
+
+  if (pullRequest) {
+    const number = typeof pullRequest.number === 'number' ? pullRequest.number : Number.NaN;
+    const title = typeof pullRequest.title === 'string' ? pullRequest.title.slice(0, 300) : '';
+    const body = typeof pullRequest.body === 'string' ? pullRequest.body : '';
+    const pullRequestUrl = safeHttpUrl(pullRequest.html_url);
+    const pullRequestId = typeof pullRequest.id === 'number' || typeof pullRequest.id === 'string' ? String(pullRequest.id).slice(0, 120) : '';
     if (pullRequestUrl && pullRequestId) {
       for (const taskId of extractTaskIds(`${title} ${body}`).filter(validTaskReference)) {
         statements.push(context.env.DB.prepare(`INSERT OR IGNORE INTO github_links (id, project_id, resource_type, resource_id, github_type, github_id, url)
@@ -166,6 +171,93 @@ githubRoutes.post('/webhook', async (context) => {
           .bind(crypto.randomUUID(), taskId, pullRequestId, pullRequestUrl, taskId));
       }
     }
+
+    if (Number.isFinite(number) && number > 0 && pullRequestUrl && repositoryName) {
+      const state = pullRequest.merged === true ? 'merged' : pullRequest.state === 'closed' ? 'closed' : 'open';
+      const head = typeof pullRequest.head === 'object' && pullRequest.head !== null ? pullRequest.head as Record<string, unknown> : {};
+      const base = typeof pullRequest.base === 'object' && pullRequest.base !== null ? pullRequest.base as Record<string, unknown> : {};
+      const mergedAt = typeof pullRequest.merged_at === 'string'
+        ? Math.floor(new Date(pullRequest.merged_at).getTime() / 1000)
+        : null;
+
+      statements.push(context.env.DB.prepare(`INSERT INTO github_pull_requests
+        (id, project_id, repository, number, title, url, state, draft, head_ref, base_ref, head_sha, merged_at)
+        VALUES (?, 'project_cerberus', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(repository, number) DO UPDATE SET
+          title=excluded.title, url=excluded.url, state=excluded.state, draft=excluded.draft,
+          head_ref=excluded.head_ref, base_ref=excluded.base_ref, head_sha=excluded.head_sha,
+          merged_at=excluded.merged_at, updated_at=unixepoch()`)
+        .bind(
+          crypto.randomUUID(), repositoryName, number, title || `Pull request #${number}`, pullRequestUrl, state,
+          pullRequest.draft === true ? 1 : 0,
+          typeof head.ref === 'string' ? head.ref.slice(0, 200) : null,
+          typeof base.ref === 'string' ? base.ref.slice(0, 200) : null,
+          typeof head.sha === 'string' ? head.sha.slice(0, 80) : null,
+          mergedAt,
+        ));
+
+      for (const taskId of extractTaskIds(`${title} ${body}`).filter(validTaskReference)) {
+        statements.push(context.env.DB.prepare(`INSERT OR IGNORE INTO github_pull_request_tasks (pull_request_id, task_id)
+          SELECT p.id, ? FROM github_pull_requests p WHERE p.repository=? AND p.number=?
+            AND EXISTS (SELECT 1 FROM tasks WHERE id=? AND archived_at IS NULL)`)
+          .bind(taskId, repositoryName, number, taskId));
+      }
+
+      if (mergedAt) {
+        // Merge readiness is informational only: the evidence-gated review
+        // invariant still requires the assignee to submit through the workflow.
+        statements.push(context.env.DB.prepare(`INSERT INTO notifications (id, user_id, type, title, body, resource_type, resource_id)
+          SELECT lower(hex(randomblob(16))), t.assignee_id, 'task.github_merged', 'Pull request merged', ?, 'task', t.id
+          FROM github_pull_request_tasks gpt
+          JOIN github_pull_requests p ON p.id = gpt.pull_request_id
+          JOIN tasks t ON t.id = gpt.task_id
+          WHERE p.repository=? AND p.number=? AND t.assignee_id IS NOT NULL AND t.archived_at IS NULL`)
+          .bind(
+            `Pull request #${number} was merged. The task is ready for you to submit review evidence.`,
+            repositoryName,
+            number,
+          ));
+      }
+    }
+  }
+
+  const checksSha = eventType === 'check_suite' && typeof payload.check_suite === 'object' && payload.check_suite !== null
+    ? (payload.check_suite as Record<string, unknown>).head_sha
+    : eventType === 'check_run' && typeof payload.check_run === 'object' && payload.check_run !== null
+      ? (payload.check_run as Record<string, unknown>).head_sha
+      : eventType === 'status'
+        ? payload.sha
+        : undefined;
+
+  if (typeof checksSha === 'string' && checksSha && repositoryName) {
+    const source = eventType === 'check_suite'
+      ? payload.check_suite as Record<string, unknown>
+      : eventType === 'check_run'
+        ? payload.check_run as Record<string, unknown>
+        : payload;
+    const state = eventType === 'status'
+      ? (typeof payload.state === 'string' ? payload.state : 'pending')
+      : (typeof source.status === 'string' ? source.status : 'queued');
+    const conclusion = typeof source.conclusion === 'string' ? source.conclusion : null;
+    let checksStatus: 'unknown' | 'pending' | 'success' | 'failure' | 'neutral';
+    if (eventType === 'status') {
+      checksStatus = state === 'success' ? 'success' : state === 'failure' || state === 'error' ? 'failure' : 'pending';
+    } else if (state !== 'completed') {
+      checksStatus = 'pending';
+    } else if (['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure'].includes(conclusion ?? '')) {
+      checksStatus = 'failure';
+    } else if (['neutral', 'skipped', 'stale'].includes(conclusion ?? '')) {
+      checksStatus = 'neutral';
+    } else if (conclusion === 'success') {
+      checksStatus = 'success';
+    } else {
+      checksStatus = 'unknown';
+    }
+
+    statements.push(context.env.DB.prepare(`UPDATE github_pull_requests
+      SET checks_status=?, checks_json=?, updated_at=unixepoch()
+      WHERE repository=? AND head_sha=? AND state='open'`)
+      .bind(checksStatus, JSON.stringify({ source: eventType, state, conclusion, at: Math.floor(Date.now() / 1000) }), repositoryName, checksSha.slice(0, 80)));
   }
 
   try {
@@ -211,6 +303,44 @@ githubRoutes.get('/status', async (context) => {
       updatedAt: settings?.updatedAt,
       events: events.results,
       links: links.results,
+    },
+  });
+});
+
+githubRoutes.get('/pull-requests', async (context) => {
+  const page = Math.max(1, Number(context.req.query('page') ?? 1));
+  const limit = Math.min(100, Math.max(1, Number(context.req.query('limit') ?? 25)));
+  const requested = context.req.query('state');
+  const state = requested && ['open', 'closed', 'merged'].includes(requested) ? requested : null;
+
+  const conditions: string[] = [];
+  const bindings: unknown[] = [];
+  if (state) { conditions.push('p.state = ?'); bindings.push(state); }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const [rows, total] = await Promise.all([
+    context.env.DB.prepare(`SELECT p.id, p.repository, p.number, p.title, p.url, p.state, p.draft,
+        p.head_ref AS headRef, p.base_ref AS baseRef, p.head_sha AS headSha,
+        p.checks_status AS checksStatus, p.checks_json AS checksJson, p.merged_at AS mergedAt,
+        p.created_at AS createdAt, p.updated_at AS updatedAt,
+        (SELECT group_concat(t.title, ' | ') FROM github_pull_request_tasks gpt
+          JOIN tasks t ON t.id = gpt.task_id WHERE gpt.pull_request_id = p.id) AS taskTitles
+      FROM github_pull_requests p ${where}
+      ORDER BY p.updated_at DESC, p.number DESC LIMIT ? OFFSET ?`)
+      .bind(...bindings, limit, (page - 1) * limit).all(),
+    context.env.DB.prepare(`SELECT COUNT(*) AS count FROM github_pull_requests p ${where}`)
+      .bind(...bindings).first<{ count: number }>(),
+  ]);
+
+  return context.json({
+    ok: true,
+    data: rows.results,
+    meta: {
+      page,
+      limit,
+      total: total?.count ?? 0,
+      hasMore: page * limit < (total?.count ?? 0),
+      state: state ?? 'all',
     },
   });
 });
@@ -278,10 +408,47 @@ githubRoutes.post('/sync', requirePermission('workspace.admin'), async (context)
     const result = await syncRepository(context.env, config.repository);
     const statements: D1PreparedStatement[] = [];
     let linked = 0;
+
+    // Check rollups are best-effort: a CI lookup failure must not fail the sync.
+    const checks = new Map<number, GithubChecksRollup>();
+    const checkCandidates = result.pullRequests
+      .filter((pullRequest) => typeof pullRequest.head?.sha === 'string' && pullRequest.head.sha)
+      .slice(0, 10);
+    await Promise.all(checkCandidates.map(async (pullRequest) => {
+      try {
+        checks.set(pullRequest.number, await fetchChecksRollup(context.env, result.repository.full_name, pullRequest.head!.sha!));
+      } catch (error) {
+        console.error(JSON.stringify({
+          level: 'warn',
+          service: 'github-sync-checks',
+          message: error instanceof Error ? error.message : 'unknown',
+          number: pullRequest.number,
+        }));
+      }
+    }));
+
     for (const pullRequest of result.pullRequests) {
       const pullRequestUrl = safeHttpUrl(pullRequest.html_url);
       if (!pullRequestUrl) continue;
       const taskIds = extractTaskIds(`${pullRequest.title} ${pullRequest.body ?? ''}`).filter(validTaskReference);
+      const rollup = checks.get(pullRequest.number);
+
+      statements.push(context.env.DB.prepare(`INSERT INTO github_pull_requests
+        (id, project_id, repository, number, title, url, state, draft, head_ref, base_ref, head_sha, checks_status, checks_json)
+        VALUES (?, 'project_cerberus', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(repository, number) DO UPDATE SET
+          title=excluded.title, url=excluded.url, state=excluded.state, draft=excluded.draft,
+          head_ref=excluded.head_ref, base_ref=excluded.base_ref, head_sha=excluded.head_sha,
+          checks_status=excluded.checks_status, checks_json=excluded.checks_json, updated_at=unixepoch()`)
+        .bind(
+          crypto.randomUUID(), result.repository.full_name, pullRequest.number,
+          pullRequest.title.slice(0, 300), pullRequestUrl,
+          pullRequest.merged === true ? 'merged' : pullRequest.state === 'closed' ? 'closed' : 'open',
+          pullRequest.draft ? 1 : 0,
+          pullRequest.head?.ref ?? null, pullRequest.base?.ref ?? null, pullRequest.head?.sha ?? null,
+          rollup?.status ?? 'unknown', JSON.stringify(rollup ?? {}),
+        ));
+
       for (const taskId of taskIds) {
         linked += 1;
         statements.push(context.env.DB.prepare(`INSERT OR IGNORE INTO github_links
@@ -289,6 +456,10 @@ githubRoutes.post('/sync', requirePermission('workspace.admin'), async (context)
           SELECT ?, 'project_cerberus', 'task', ?, 'pull_request', ?, ?
           WHERE EXISTS (SELECT 1 FROM tasks WHERE id=? AND archived_at IS NULL)`)
           .bind(crypto.randomUUID(), taskId, String(pullRequest.number).slice(0, 120), pullRequestUrl, taskId));
+        statements.push(context.env.DB.prepare(`INSERT OR IGNORE INTO github_pull_request_tasks (pull_request_id, task_id)
+          SELECT p.id, ? FROM github_pull_requests p WHERE p.repository=? AND p.number=?
+            AND EXISTS (SELECT 1 FROM tasks WHERE id=? AND archived_at IS NULL)`)
+          .bind(taskId, result.repository.full_name, pullRequest.number, taskId));
       }
     }
 
@@ -323,6 +494,7 @@ githubRoutes.post('/sync', requirePermission('workspace.admin'), async (context)
         pullRequests: result.pullRequests.length,
         branches: result.branchCount,
         linked,
+        checksChecked: checks.size,
         syncedAt,
       },
     });
