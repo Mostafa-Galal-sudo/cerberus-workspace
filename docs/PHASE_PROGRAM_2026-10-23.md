@@ -1,7 +1,7 @@
 # CERBERUS Workspace — Ten-Feature Program (2026-10-23)
 
 Baseline: `main` at `ec769bb`, clean tree, typecheck green, 72 unit tests, 76 D1-backed integration tests.
-Production remains on Worker `a775154e-6d0a-4a98-b571-a0035aefa3a0`; this program does not deploy, push, or apply remote migrations.
+Phases 1–3 were committed at `f8888c5`, `fe581a1`, and `878f7a3`, pushed on 2026-10-25 (CI run `40149585758` passed both jobs), and deployed to production with Worker `690cc2c8-2037-4ca5-a986-1301d597c305` and migrations `0001`–`0010`. Deployment used the built config with the R2 binding stripped because the bucket still cannot be created; R2, email, and GitHub outbound remain provider-gated.
 
 ## Phase 0 — execution plan
 
@@ -40,9 +40,9 @@ Provider-gated behavior (R2, email, GitHub) is untouched in this phase. No live-
 
 ### Phase 1 — completion record (2026-10-24)
 
-**Status: implemented and verified locally; not deployed.**
+**Status: implemented, verified locally, and deployed to production on 2026-10-25.**
 
-- Migration `0008_phase1_workspace.sql` applied to local D1 only. Remote D1 remains at `0001`–`0007`; production Worker remains `a775154e-6d0a-4a98-b571-a0035aefa3a0`.
+- Migration `0008_phase1_workspace.sql` applied to local and production D1. The production ledger now shows `0001`–`0010`; production Worker is `690cc2c8-2037-4ca5-a986-1301d597c305`.
 - Safe documentation: `src/components/markdown.tsx` renders GFM through `react-markdown` + `remark-gfm` with `skipHtml`, no raw-HTML pipeline, and a URL policy restricted to `http`/`https`/`mailto` plus relative links. The wiki page renders Markdown, syncs the selected slug into the URL, and offers an editor preview; assistant replies render as Markdown.
 - Experiment runs: `worker/routes/experiments.ts` serves list/create/detail plus CSV export, validates metrics, and allocates `run_number` through an atomic batch guarded by the unique `(experiment_id, run_number)` index. The UI exposes history, detail, comparison, trend chart, CSV, and optional task/checkpoint links.
 - Hardware lifecycle: `worker/routes/hardware.ts` supports `quantity` and `serialized` tracking modes, admin-only checkout/maintenance, holder-or-admin return with a required condition, custody history, maintenance/calibration log, and server-computed low stock plus overdue maintenance. Serialized items are constrained to quantity 1 by schema guards.
@@ -57,9 +57,9 @@ Task dates/estimates/worklogs, My Week, overdue, calendar, workload, dependency 
 
 ### Phase 2 — completion record (2026-10-25)
 
-**Status: implemented and verified locally; not deployed.**
+**Status: implemented, verified locally, and deployed to production on 2026-10-25.**
 
-- Migration `0009_phase2_planning_governance.sql` applied to local D1 only (29 statements). Remote D1 remains at `0001`–`0007`; production Worker remains `a775154e-6d0a-4a98-b571-a0035aefa3a0`.
+- Migration `0009_phase2_planning_governance.sql` applied to local and production D1 (29 statements). The production ledger now shows `0001`–`0010`; production Worker is `690cc2c8-2037-4ca5-a986-1301d597c305`.
 - Task scheduling and effort: `start_date`, `due_date`, and `estimate_hours` are validated on create and update (`INVALID_SCHEDULE`), surfaced in list/detail payloads, and stored as UTC date keys. `task_worklogs` enforces owner-or-admin access, 0.25–24 hour entries, a today+1 UTC date ceiling (`FUTURE_WORKLOG`), and a 24-hour per-user per-day cap across tasks (`DAILY_HOURS_EXCEEDED`); additions and deletions are audited. The task detail page gains a schedule summary and an effort ledger.
 - Planning surface: `worker/routes/planning.ts` mounts `/api/v1/planning` with `my-week`, `calendar`, `timeline`, and `workload`. Members read their own plan; administrators, technical leads, and supervisors may pass `memberId`; supervisors are read-only. Windows are capped at 180 days, list endpoints return pagination meta, and timeline dependency edges ride in `meta.edges` so `apiWithMeta` consumes them in one request. The UI consolidates My Week, Calendar, Timeline, and Workload into `/planning` with WAI-ARIA tabs, roving tabindex, and arrow/Home/End navigation.
 - Review governance: rubrics require 2–12 weighted criteria with unique labels summing to 100 and support deactivation. Assignments store reviewer and optional rubric and notify the reviewer. Self-review is rejected (`SELF_REVIEW_FORBIDDEN`); the assigned reviewer alone may decide, with a super-admin override. Scored decisions store `scores_json` and `total_score`; rubric mismatch, missing scores, and scores without a rubric are rejected. Unscored decisions stay valid when no rubric is assigned.
@@ -75,9 +75,9 @@ Persistent assistant threads, retrieval-backed citations, audited read-only tool
 
 ### Phase 3 — completion record (2026-10-25)
 
-**Status: implemented and verified locally; not deployed.**
+**Status: implemented, verified locally, and deployed to production on 2026-10-25.**
 
-- Migration `0010_phase3_assistant_security.sql` applied to local D1 only (12 statements). Remote D1 remains at `0001`–`0007`; production Worker remains `a775154e-6d0a-4a98-b571-a0035aefa3a0`.
+- Migration `0010_phase3_assistant_security.sql` applied to local and production D1 (12 statements). The production ledger now shows `0001`–`0010`; production Worker is `690cc2c8-2037-4ca5-a986-1301d597c305`.
 - Assistant threads: `assistant_threads` and `assistant_messages` are per-user, paginated (meta on list), renameable, and archived instead of deleted. `POST /assistant/threads/:id/messages` stores the user turn, the assistant turn, and usage telemetry (`assistant_usage.thread_id`) in one D1 batch; archived threads reject new turns with `THREAD_ARCHIVED`. The first prompt becomes the thread title (80 characters). The legacy stateless `POST /assistant/chat` remains unchanged with a null `thread_id`.
 - Retrieval-backed citations: tool selection is deterministic server-side keyword matching (`ASSISTANT_TOOL_REGISTRY`) — never client input. `search_workspace`, `task_ledger`, `open_blockers`, `roadmap`, `decisions`, `roster`, and `wiki` are read-only D1 queries. Citations are labelled "RETRIEVED SOURCES (server-read, not model-verified)"; each tool invocation writes an `assistant.tool_invoked` audit row with tool name, result count, and duration.
 - D1 LIKE hardening: local D1 rejects LIKE patterns longer than 50 bytes (`LIKE or GLOB pattern too complex`). `buildLikePatterns` keeps short queries as escaped phrase patterns and reduces long natural-language prompts to at most four keywords, each bounded to 48 escaped bytes. This also fixes `/api/v1/search` for queries between 51 and 100 characters, which previously could return `500`.
@@ -93,3 +93,4 @@ Persistent assistant threads, retrieval-backed citations, audited read-only tool
 - 2026-10-24: Phase 1 gate green locally (85 unit / 15 files, 80 integration / 13 files, 8 E2E) and committed. No push, deploy, or remote migration. Phase 2 not started.
 - 2026-10-25: Phase 2 gate green locally (99 unit / 16 files, 92 integration / 14 files, 10 E2E) and committed. Migration `0009` local-only; no push, deploy, or remote mutation.
 - 2026-10-25: Phase 3 gate green locally (110 unit / 17 files, 100 integration / 15 files, 12 E2E) and committed. Migration `0010` local-only; no push, deploy, or remote mutation.
+- 2026-10-25: Phases 1–3 pushed (`ec769bb..878f7a3`); CI run `40149585758` passed verify + E2E. Migrations `0008` (29 statements), `0009`, and `0010` (12 statements) applied to production D1; ledger verified at `0001`–`0010`. Production deployment succeeded with Worker `690cc2c8-2037-4ca5-a986-1301d597c305` from `dist/cerberus_workspace/wrangler.deploy.json` after the standard `npm run deploy` failed on the missing R2 bucket (`10085`). Non-intrusive production smoke passed 12/12; production data verified at 7 users, 30 tasks, 1 admin role, and empty `assistant_threads`/`user_mfa`/`login_events`. R2, email, and GitHub outbound remain provider-gated and live-unverified.
