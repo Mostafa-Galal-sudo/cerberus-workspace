@@ -21,6 +21,7 @@ export interface Env {
   AI_BASE_URL?: string;
   AI_MODEL?: string;
   SESSION_IDLE_MINUTES?: string;
+  MFA_ENCRYPTION_KEY?: string;
 }
 
 export interface AuthUser {
@@ -33,4 +34,10 @@ export interface AuthUser {
   mustChangePassword: boolean;
 }
 
-export type Variables = { user: AuthUser; sessionId: string; csrfToken: string };
+export type Variables = {
+  user: AuthUser;
+  sessionId: string;
+  csrfToken: string;
+  sessionLastSeenAt: number;
+  sessionExpiresAt: number;
+};

@@ -15,6 +15,7 @@ import {
   parseRecoveryHashes,
   verifyTotp,
 } from '../services/mfa';
+import { mfaSecretMode, needsMfaSecretReseal, openMfaSecret, sealMfaSecret } from '../services/mfa-secret';
 import { consumeRateLimit } from '../services/rate-limit';
 import { verifyPassword } from '../services/security';
 import { idleTimeoutMinutes } from '../services/session-security';
@@ -67,6 +68,7 @@ accountRoutes.get('/overview', async (context) => {
           enabled: Boolean(mfa?.confirmed_at),
           confirmedAt: mfa?.confirmed_at ?? null,
           recoveryCodesRemaining: parseRecoveryHashes(mfa?.recovery_codes_json).length,
+          encryption: mfaSecretMode(context.env),
         },
         lastLoginAt: lastLogin?.created_at ?? null,
         lastLoginMethod: lastLogin?.method ?? null,
@@ -185,12 +187,21 @@ accountRoutes.post('/mfa/setup', async (context) => {
   }
 
   const secret = generateTotpSecret();
+  let sealed: string;
+  try {
+    sealed = await sealMfaSecret(context.env, secret, user.id);
+  } catch {
+    return context.json({
+      ok: false,
+      error: { code: 'MFA_UNAVAILABLE', message: 'Authenticator setup is temporarily unavailable. Contact an administrator.' },
+    }, 503);
+  }
   await context.env.DB.batch([
     context.env.DB.prepare(`INSERT INTO user_mfa (user_id, secret, confirmed_at, last_used_step, recovery_codes_json)
       VALUES (?, ?, NULL, NULL, '[]')
       ON CONFLICT(user_id) DO UPDATE SET secret = excluded.secret, confirmed_at = NULL,
         last_used_step = NULL, recovery_codes_json = '[]', updated_at = unixepoch()`)
-      .bind(user.id, secret),
+      .bind(user.id, sealed),
     audit(context.env, user.id, 'account.mfa_setup_started', 'user', user.id),
   ]);
 
@@ -226,7 +237,16 @@ accountRoutes.post('/mfa/confirm', async (context) => {
     return context.json({ ok: false, error: { code: 'MFA_ALREADY_ENABLED', message: 'Authenticator protection is already enabled' } }, 409);
   }
 
-  const verification = await verifyTotp(row.secret, parsed.data.code);
+  let secret: string;
+  try {
+    secret = await openMfaSecret(context.env, row.secret, user.id);
+  } catch {
+    return context.json({
+      ok: false,
+      error: { code: 'MFA_UNAVAILABLE', message: 'Authenticator verification is temporarily unavailable. Contact an administrator.' },
+    }, 503);
+  }
+  const verification = await verifyTotp(secret, parsed.data.code);
   if (!verification.valid) {
     return context.json({ ok: false, error: { code: 'MFA_CODE_INVALID', message: 'That authenticator code is not valid' } }, 401);
   }
@@ -265,9 +285,23 @@ accountRoutes.post('/mfa/disable', async (context) => {
     return context.json({ ok: false, error: { code: 'MFA_NOT_ENABLED', message: 'Authenticator protection is not enabled' } }, 409);
   }
 
-  const code = await verifyTotp(row.secret, parsed.data.code);
-  const recoveryIndex = code.valid ? -1 : await matchRecoveryCode(parsed.data.code, parseRecoveryHashes(row.recovery_codes_json));
-  if (!code.valid && recoveryIndex < 0) {
+  const recoveryHashes = parseRecoveryHashes(row.recovery_codes_json);
+  const recoveryIndex = await matchRecoveryCode(parsed.data.code, recoveryHashes);
+  let totpValid = false;
+  let secretUnreadable = false;
+  try {
+    const secret = await openMfaSecret(context.env, row.secret, user.id);
+    totpValid = (await verifyTotp(secret, parsed.data.code)).valid;
+  } catch {
+    secretUnreadable = true;
+  }
+  if (!totpValid && recoveryIndex < 0) {
+    if (secretUnreadable) {
+      return context.json({
+        ok: false,
+        error: { code: 'MFA_UNAVAILABLE', message: 'Authenticator verification is temporarily unavailable. Use a recovery code or contact an administrator.' },
+      }, 503);
+    }
     return context.json({ ok: false, error: { code: 'MFA_CODE_INVALID', message: 'That verification code is not valid' } }, 401);
   }
 
@@ -277,7 +311,7 @@ accountRoutes.post('/mfa/disable', async (context) => {
     context.env.DB.prepare(`UPDATE sessions SET revoked_at = unixepoch()
       WHERE user_id = ? AND id <> ? AND revoked_at IS NULL`).bind(user.id, context.get('sessionId')),
     audit(context.env, user.id, 'account.mfa_disabled', 'user', user.id, {
-      method: code.valid ? 'totp' : 'recovery_code',
+      method: totpValid ? 'totp' : 'recovery_code',
     }),
   ]);
 
@@ -305,21 +339,44 @@ accountRoutes.post('/mfa/recovery-codes', async (context) => {
     return context.json({ ok: false, error: { code: 'MFA_NOT_ENABLED', message: 'Authenticator protection is not enabled' } }, 409);
   }
 
-  const code = await verifyTotp(row.secret, parsed.data.code);
-  const recoveryIndex = code.valid ? -1 : await matchRecoveryCode(parsed.data.code, parseRecoveryHashes(row.recovery_codes_json));
-  if (!code.valid && recoveryIndex < 0) {
+  const recoveryIndex = await matchRecoveryCode(parsed.data.code, parseRecoveryHashes(row.recovery_codes_json));
+  let totpValid = false;
+  let secretUnreadable = false;
+  try {
+    const secret = await openMfaSecret(context.env, row.secret, user.id);
+    totpValid = (await verifyTotp(secret, parsed.data.code)).valid;
+  } catch {
+    secretUnreadable = true;
+  }
+  if (!totpValid && recoveryIndex < 0) {
+    if (secretUnreadable) {
+      return context.json({
+        ok: false,
+        error: { code: 'MFA_UNAVAILABLE', message: 'Authenticator verification is temporarily unavailable. Use a recovery code or contact an administrator.' },
+      }, 503);
+    }
     return context.json({ ok: false, error: { code: 'MFA_CODE_INVALID', message: 'That verification code is not valid' } }, 401);
   }
 
   const recoveryCodes = generateRecoveryCodes(RECOVERY_CODE_COUNT);
   const hashes = await Promise.all(recoveryCodes.map(hashRecoveryCode));
-  await context.env.DB.batch([
+  const statements: D1PreparedStatement[] = [
     context.env.DB.prepare(`UPDATE user_mfa SET recovery_codes_json = ?, updated_at = unixepoch() WHERE user_id = ?`)
       .bind(JSON.stringify(hashes), user.id),
     audit(context.env, user.id, 'account.mfa_recovery_codes_regenerated', 'user', user.id, {
       count: recoveryCodes.length,
     }),
-  ]);
+  ];
+  if (needsMfaSecretReseal(context.env, row.secret)) {
+    try {
+      const resealed = await sealMfaSecret(context.env, await openMfaSecret(context.env, row.secret, user.id), user.id);
+      statements.push(context.env.DB.prepare(`UPDATE user_mfa SET secret = ?, updated_at = unixepoch() WHERE user_id = ?`)
+        .bind(resealed, user.id));
+    } catch {
+      // Regeneration already succeeded; a reseal failure is not fatal.
+    }
+  }
+  await context.env.DB.batch(statements);
 
   return context.json({ ok: true, data: { recoveryCodes } });
 });

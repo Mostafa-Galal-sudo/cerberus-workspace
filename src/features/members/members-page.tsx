@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  ShieldOff,
   UserCheck,
   UserX,
 } from 'lucide-react';
@@ -30,6 +31,7 @@ interface Member {
   taskApproved?: number;
   lastActivityAt?: number;
   createdAt: number;
+  mfaEnabled?: number | boolean;
 }
 
 interface CheckpointItem {
@@ -136,6 +138,15 @@ export function MembersPage() {
       setActionMessage(res.delivery === 'email' ? 'One-time reset link generated and emailed to the member.' : 'One-time password reset link generated. Email delivery is not configured, so share it privately.');
     },
     onError: (err) => setActionMessage(err instanceof ApiError ? err.message : 'Password reset link generation failed'),
+  });
+
+  const resetMfa = useMutation({
+    mutationFn: (id: string) => api<{ reset: boolean; revokedSessions: number }>(`/users/${id}/mfa/reset`, { method: 'POST' }),
+    onSuccess: (res) => {
+      setActionMessage(`Authenticator protection reset. ${res.revokedSessions} active session(s) revoked; the member must enroll again.`);
+      void queryClient.invalidateQueries({ queryKey: ['members'] });
+    },
+    onError: (err) => setActionMessage(err instanceof ApiError ? err.message : 'Authenticator reset failed'),
   });
 
   const updateProfile = useMutation({
@@ -439,6 +450,20 @@ export function MembersPage() {
                     >
                       <KeyRound size={14} /> Reset password
                     </Button>
+                    {Boolean(selectedMember.mfaEnabled) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (window.confirm(`Reset authenticator protection for ${selectedMember.name}? Their active sessions will be revoked and they must enroll a new authenticator.`)) {
+                            resetMfa.mutate(selectedMember.id);
+                          }
+                        }}
+                        disabled={resetMfa.isPending}
+                      >
+                        <ShieldOff size={14} /> Reset MFA
+                      </Button>
+                    )}
                   </>
                 )}
               </div>

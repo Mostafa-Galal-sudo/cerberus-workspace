@@ -16,7 +16,8 @@ userRoutes.get('/', async (context) => {
     (SELECT tm.team_id FROM team_members tm WHERE tm.user_id=u.id LIMIT 1) AS teamId,
     (SELECT d.name FROM engineering_domains d JOIN milestones m ON m.domain_id=d.id JOIN checkpoints c ON c.milestone_id=m.id WHERE c.owner_id=u.id LIMIT 1) AS domainName,
     (SELECT COUNT(*) FROM tasks t WHERE t.assignee_id=u.id AND t.archived_at IS NULL) AS taskTotal,
-    (SELECT COUNT(*) FROM tasks t WHERE t.assignee_id=u.id AND t.status='approved' AND t.archived_at IS NULL) AS taskApproved
+    (SELECT COUNT(*) FROM tasks t WHERE t.assignee_id=u.id AND t.status='approved' AND t.archived_at IS NULL) AS taskApproved,
+    EXISTS(SELECT 1 FROM user_mfa m WHERE m.user_id=u.id AND m.confirmed_at IS NOT NULL) AS mfaEnabled
     FROM users u
     LEFT JOIN user_roles ur ON ur.user_id=u.id
     LEFT JOIN roles r ON r.id=ur.role_id
@@ -28,7 +29,7 @@ userRoutes.get('/', async (context) => {
     ok: true,
     data: rows.results.map((row) => privileged || row.id === user.id
       ? row
-      : { ...row, email: '', bio: null, lastActivityAt: null }),
+      : { ...row, email: '', bio: null, lastActivityAt: null, mfaEnabled: undefined }),
   });
 });
 
@@ -244,6 +245,53 @@ userRoutes.post('/:id/reset-password', requirePermission('workspace.admin'), asy
       delivery,
     },
   });
+});
+
+userRoutes.post('/:id/mfa/reset', requirePermission('workspace.admin'), async (context) => {
+  const targetId = context.req.param('id');
+  const current = context.get('user');
+  if (targetId === current.id) {
+    return context.json({
+      ok: false,
+      error: { code: 'SELF_MFA_RESET', message: 'Manage your own authenticator from Account security' },
+    }, 409);
+  }
+
+  const target = await context.env.DB.prepare(`SELECT id, email, display_name, archived_at FROM users WHERE id = ?`)
+    .bind(targetId).first<{ id: string; email: string; display_name: string; archived_at: number | null }>();
+  if (!target || target.archived_at !== null) {
+    return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'User not found' } }, 404);
+  }
+  const mfa = await context.env.DB.prepare(`SELECT 1 AS present FROM user_mfa WHERE user_id = ?`)
+    .bind(targetId).first<{ present: number }>();
+  if (!mfa) {
+    return context.json({ ok: false, error: { code: 'MFA_NOT_ENABLED', message: 'This account does not have authenticator protection enabled' } }, 409);
+  }
+
+  const results = await context.env.DB.batch([
+    context.env.DB.prepare(`UPDATE sessions SET revoked_at = unixepoch() WHERE user_id = ? AND revoked_at IS NULL`).bind(targetId),
+    context.env.DB.prepare(`DELETE FROM login_challenges WHERE user_id = ?`).bind(targetId),
+    context.env.DB.prepare(`DELETE FROM user_mfa WHERE user_id = ?`).bind(targetId),
+    context.env.DB.prepare(`INSERT INTO notifications (id, user_id, type, title, body, resource_type, resource_id)
+      VALUES (?, ?, 'account.mfa_reset', 'Authenticator protection reset', ?, 'user', ?)`)
+      .bind(
+        crypto.randomUUID(), targetId,
+        'An administrator reset your authenticator. Sign in with your password and enroll a new authenticator from Account security.',
+        targetId,
+      ),
+    audit(context.env, current.id, 'user.mfa_reset_by_admin', 'user', targetId),
+  ]);
+  const revokedSessions = results[0].meta.changes ?? 0;
+
+  if (emailDeliveryConfigured(context.env)) {
+    await sendEmail(context.env, {
+      to: target.email,
+      subject: 'CERBERUS workspace authenticator reset',
+      text: `Hello ${target.display_name},\n\nAn administrator reset the authenticator protection on your CERBERUS workspace account. Existing sessions were revoked.\n\nSign in with your password and enroll a new authenticator from Account security. If you did not expect this, contact the workspace administrator immediately.\n`,
+    }).catch(() => undefined);
+  }
+
+  return context.json({ ok: true, data: { reset: true, revokedSessions } });
 });
 
 userRoutes.patch('/:id/profile', async (context) => {

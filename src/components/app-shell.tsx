@@ -31,21 +31,39 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '../app/auth-context';
 import { useRealtimeEvents } from '../lib/use-realtime-events';
 import { api } from '../lib/api';
+import { useIdleWarning } from '../lib/use-idle-warning';
 import { Button } from './ui';
 import { CommandPalette } from './command-palette';
 import { CerberusLogo, CerberusSentinelStatus } from './cerberus-logo';
+import { IdleWarningDialog } from './idle-warning-dialog';
 
 export function AppShell() {
-  const { user, logout } = useAuth();
+  const { user, session, logout, refresh } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [staying, setStaying] = useState(false);
   const [mode, setMode] = useState<'member' | 'admin' | 'supervisor'>(() =>
     user?.roles.includes('super_admin') ? 'admin' : user?.roles.includes('project_supervisor') ? 'supervisor' : 'member'
   );
   useRealtimeEvents(Boolean(user));
 
   const closePalette = useCallback(() => setPaletteOpen(false), []);
+
+  const handleExpire = useCallback(() => {
+    void logout().finally(() => navigate('/login', { replace: true }));
+  }, [logout, navigate]);
+  const idle = useIdleWarning({
+    idleMinutes: session?.idleTimeoutMinutes ?? 480,
+    lastSeenAt: session?.lastSeenAt ?? null,
+    enabled: Boolean(user && session),
+    onStay: refresh,
+    onExpire: handleExpire,
+  });
+  const handleStay = async () => {
+    setStaying(true);
+    try { await idle.stay(); } finally { setStaying(false); }
+  };
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -196,6 +214,15 @@ export function AppShell() {
       </main>
 
       {paletteOpen && <CommandPalette onClose={closePalette} />}
+      {idle.warning && (
+        <IdleWarningDialog
+          secondsLeft={idle.secondsLeft}
+          pending={staying}
+          onStay={() => void handleStay()}
+          onSignOut={handleExpire}
+          onDismiss={idle.dismiss}
+        />
+      )}
     </div>
   );
 }

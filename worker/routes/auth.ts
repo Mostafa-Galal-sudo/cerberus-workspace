@@ -8,9 +8,11 @@ import { audit } from '../services/audit';
 import { emailDeliveryConfigured, sendEmail } from '../services/email';
 import { workspaceEventStatements } from '../services/events';
 import { matchRecoveryCode, parseRecoveryHashes, verifyTotp } from '../services/mfa';
+import { needsMfaSecretReseal, openMfaSecret, sealMfaSecret } from '../services/mfa-secret';
+import { alertNewSignin } from '../services/signin-alerts';
 import { consumeRateLimit, markRateLimitSuccess } from '../services/rate-limit';
 import { hashPassword, randomToken, sha256, timingSafeCompare, verifyPassword } from '../services/security';
-import { MFA_CHALLENGE_MAX_ATTEMPTS, MFA_CHALLENGE_SECONDS, recordLoginEvent, type LoginMethod } from '../services/session-security';
+import { MFA_CHALLENGE_MAX_ATTEMPTS, MFA_CHALLENGE_SECONDS, idleTimeoutMinutes, recordLoginEvent, type LoginMethod } from '../services/session-security';
 
 export const authRoutes = new Hono<{ Bindings: Env; Variables: Variables }>();
 const sessionSeconds = 60 * 60 * 24 * 7;
@@ -144,7 +146,19 @@ authRoutes.post('/login/mfa', async (context) => {
   let step: number | null = null;
   let remainingRecoveryHashes: string[] | null = null;
 
-  const totp = await verifyTotp(challenge.secret as string, parsed.data.code, now);
+  let secret: string | null = null;
+  try {
+    secret = await openMfaSecret(context.env, challenge.secret as string, challenge.user_id);
+  } catch (cause) {
+    // A missing or rotated key must not disable hashed recovery codes.
+    console.error(JSON.stringify({
+      level: 'error',
+      service: 'mfa-login',
+      message: cause instanceof Error ? cause.name : 'unknown',
+    }));
+  }
+
+  const totp = secret === null ? { valid: false, step: null } : await verifyTotp(secret, parsed.data.code, now);
   if (totp.valid && totp.step !== null && totp.step > (challenge.last_used_step ?? -1)) {
     step = totp.step;
   } else {
@@ -153,6 +167,14 @@ authRoutes.post('/login/mfa', async (context) => {
     if (matchedIndex >= 0) {
       method = 'recovery_code';
       remainingRecoveryHashes = hashes.filter((_, index) => index !== matchedIndex);
+    } else if (secret === null) {
+      await recordLoginEvent(context.env, {
+        userId: challenge.user_id, success: false, method: 'mfa', reason: 'mfa_secret_unreadable', ipHash, userAgent,
+      });
+      return context.json({
+        ok: false,
+        error: { code: 'MFA_UNAVAILABLE', message: 'Authenticator verification is temporarily unavailable. Use a recovery code or contact an administrator.' },
+      }, 503);
     } else {
       await context.env.DB.batch([
         context.env.DB.prepare(`UPDATE login_challenges SET attempts = attempts + 1 WHERE id = ?`).bind(challenge.id),
@@ -182,6 +204,15 @@ authRoutes.post('/login/mfa', async (context) => {
   } else if (remainingRecoveryHashes) {
     statements.push(context.env.DB.prepare(`UPDATE user_mfa SET recovery_codes_json = ?, updated_at = unixepoch() WHERE user_id = ?`)
       .bind(JSON.stringify(remainingRecoveryHashes), challenge.user_id));
+  }
+  if (secret !== null && needsMfaSecretReseal(context.env, challenge.secret as string)) {
+    try {
+      const resealed = await sealMfaSecret(context.env, secret, challenge.user_id);
+      statements.push(context.env.DB.prepare(`UPDATE user_mfa SET secret = ?, updated_at = unixepoch() WHERE user_id = ?`)
+        .bind(resealed, challenge.user_id));
+    } catch {
+      // The code already verified; a reseal failure must not block the login.
+    }
   }
   await context.env.DB.batch(statements);
   await markRateLimitSuccess(context.env, rateKey);
@@ -291,7 +322,18 @@ authRoutes.post('/reset-password', async (context) => {
 });
 
 authRoutes.use('/me', requireAuth);
-authRoutes.get('/me', (context) => context.json({ ok: true, data: { user: context.get('user'), csrfToken: context.get('csrfToken') } }));
+authRoutes.get('/me', (context) => context.json({
+  ok: true,
+  data: {
+    user: context.get('user'),
+    csrfToken: context.get('csrfToken'),
+    session: {
+      idleTimeoutMinutes: idleTimeoutMinutes(context.env),
+      lastSeenAt: context.get('sessionLastSeenAt'),
+      expiresAt: context.get('sessionExpiresAt'),
+    },
+  },
+}));
 
 authRoutes.use('/change-password', requireAuth);
 authRoutes.post('/change-password', async (context) => {
@@ -349,6 +391,9 @@ async function createSession(
     context.env.DB.prepare(`UPDATE users SET last_activity_at = unixepoch() WHERE id = ?`).bind(userId),
     audit(context.env, userId, 'session.created', 'session', sessionId, { method }),
   ]);
+  await alertNewSignin(context.env, {
+    userId, ipHash, userAgent: context.req.header('User-Agent') ?? null, method,
+  });
   await recordLoginEvent(context.env, {
     userId, success: true, method, reason: reason ?? null,
     ipHash, userAgent: context.req.header('User-Agent') ?? null,

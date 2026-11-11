@@ -87,6 +87,23 @@ Persistent assistant threads, retrieval-backed citations, audited read-only tool
 - Test evidence: typecheck, lint, `npm test` (110 tests / 17 files), `npm run test:integration` (100 tests / 15 files), production build, and `npm run test:e2e` (12 tests, Edge channel). New suites are `tests/unit/phase3-security.test.ts` (RFC 6238 vectors, recovery codes, idle policy, LIKE-pattern bounds, schemas), `tests/integration/phase3-security.test.ts` (idle lock, session revocation, login history, full TOTP lifecycle with replay and recovery, thread isolation/archival, legacy chat), and `tests/e2e/phase3.spec.ts` (MFA enable/disable, thread persistence and archive). `npm audit --omit=dev` reports 0 vulnerabilities.
 - No live-success claim is made for R2, email, or GitHub outbound. Those provider gates are unchanged.
 
+## Phase 4 — credential hardening and idle-session UX
+
+Sealed authenticator secrets, administrative MFA recovery, new-network sign-in alerts, client-side idle warning, and deployment-first webhook secret resolution. No schema change.
+
+### Phase 4 — completion record (2026-11-12)
+
+**Status: implemented and verified locally on 2026-11-12.**
+
+- No migration is required: `user_mfa.secret` keeps its column and only the stored format changes.
+- Secret sealing (`worker/services/mfa-secret.ts`): AES-256-GCM with a random 12-byte IV per seal, `v1:<iv>:<ciphertext>` at rest, and `user_mfa:<user id>` as additional authenticated data so a row copied to another user cannot be decrypted. The 32-byte key comes from `MFA_ENCRYPTION_KEY` (base64 in the Worker secret store) and is never persisted in D1. Production without a key fails closed (`503 MFA_UNAVAILABLE`); development stores `dev:<secret>` and the Account security page reports the active mode. Legacy plaintext rows are read normally and re-sealed after a successful TOTP verification or recovery-code regeneration.
+- Administrative MFA reset: `POST /api/v1/users/:id/mfa/reset` is `workspace.admin`-only, refuses self-reset (`SELF_MFA_RESET`), refuses accounts without MFA (`MFA_NOT_ENABLED`), revokes all target sessions, clears pending login challenges, notifies the member, and writes `user.mfa_reset_by_admin`. The member directory only returns `mfaEnabled` to privileged callers.
+- New-network alerts: a completed sign-in whose IP hash differs from the previous successful login (ignoring `mfa_required` rows) produces an `auth.new_signin` notification containing the UTC timestamp, client, and a truncated fingerprint; email is sent only when a transport exists and the account category enables email. Failures never block login.
+- Idle-session UX: `/auth/me` returns the idle limit plus `lastSeenAt`/`expiresAt`; `useIdleWarning` warns in the final 60–120 seconds, heartbeats at most every four minutes while the tab is active, and logs out once on expiry. The warning is an `alertdialog` with initial focus, a Tab trap, and Escape-to-dismiss. Server-side expiry remains authoritative.
+- Webhook secret: `resolveWebhookSecret` prefers `GITHUB_WEBHOOK_SECRET` over the D1 integration value, matching the documented environment-first credential model.
+- Test evidence: typecheck, lint, `npm test` (126 tests / 20 files), `npm run test:integration` (104 tests / 16 files), production build, and `npm run test:e2e` (12 tests, Edge channel). New suites are `tests/unit/mfa-secret.test.ts`, `tests/unit/idle-warning.test.ts`, `tests/unit/phase4-hardening.test.ts`, and `tests/integration/phase4-security.test.ts`.
+- No live-success claim is made for R2, email, or GitHub outbound. Those provider gates are unchanged.
+
 ## Status log
 
 - 2026-10-23: baseline verified; Phase 1 started.
@@ -94,3 +111,4 @@ Persistent assistant threads, retrieval-backed citations, audited read-only tool
 - 2026-10-25: Phase 2 gate green locally (99 unit / 16 files, 92 integration / 14 files, 10 E2E) and committed. Migration `0009` local-only; no push, deploy, or remote mutation.
 - 2026-10-25: Phase 3 gate green locally (110 unit / 17 files, 100 integration / 15 files, 12 E2E) and committed. Migration `0010` local-only; no push, deploy, or remote mutation.
 - 2026-10-25: Phases 1–3 pushed (`ec769bb..878f7a3`); CI run `40149585758` passed verify + E2E. Migrations `0008` (29 statements), `0009`, and `0010` (12 statements) applied to production D1; ledger verified at `0001`–`0010`. Production deployment succeeded with Worker `690cc2c8-2037-4ca5-a986-1301d597c305` from `dist/cerberus_workspace/wrangler.deploy.json` after the standard `npm run deploy` failed on the missing R2 bucket (`10085`). Non-intrusive production smoke passed 12/12; production data verified at 7 users, 30 tasks, 1 admin role, and empty `assistant_threads`/`user_mfa`/`login_events`. R2, email, and GitHub outbound remain provider-gated and live-unverified.
+- 2026-11-12: Phase 4 gate green locally (126 unit / 20 files, 104 integration / 16 files, 12 E2E) and committed. No migration. Production deployment is pending in this phase and will be recorded here once the Worker secret and version are confirmed.

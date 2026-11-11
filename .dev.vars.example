@@ -1,6 +1,12 @@
 SETUP_TOKEN=generate-a-long-random-value
 APP_ENV=development
 APP_ORIGIN=http://localhost:5173
+# Base64-encoded 32-byte key for AES-256-GCM sealing of TOTP secrets.
+# Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+# Required in production; development falls back to unencrypted storage and says so in the UI.
+MFA_ENCRYPTION_KEY=
+# Session idle timeout in minutes (5-10080). Defaults to 480.
+SESSION_IDLE_MINUTES=480
 CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=
 CLOUDINARY_API_SECRET=

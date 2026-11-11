@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { safeHttpUrl } from '../../shared/url';
 import { requireAuth, requirePasswordChanged, requirePermission } from '../middleware/auth';
 import { audit } from '../services/audit';
-import { createPullRequest, extractTaskIds, fetchChecksRollup, githubAuthMode, GithubApiError, syncRepository, type GithubChecksRollup } from '../services/github';
+import { createPullRequest, extractTaskIds, fetchChecksRollup, githubAuthMode, GithubApiError, resolveWebhookSecret, syncRepository, type GithubChecksRollup } from '../services/github';
 import { consumeRateLimit } from '../services/rate-limit';
 import { verifyGithubSignature } from '../services/security';
 import type { Env, Variables } from '../types';
@@ -95,7 +95,9 @@ githubRoutes.post('/webhook', async (context) => {
     return context.json({ ok: false, error: { code: 'INTEGRATION_DISABLED', message: 'GitHub integration is disabled' } }, 503);
   }
   const configuredSecret = configString(config, 'webhookSecret');
-  const secret = configuredSecret || context.env.GITHUB_WEBHOOK_SECRET;
+  // The Worker secret takes precedence so a stale D1 value cannot weaken or
+  // silently replace the deployment-level verification key.
+  const secret = resolveWebhookSecret(context.env.GITHUB_WEBHOOK_SECRET, configuredSecret);
   if (!secret) {
     return context.json({ ok: false, error: { code: 'WEBHOOK_NOT_CONFIGURED', message: 'A webhook secret must be configured before deliveries are accepted' } }, 503);
   }

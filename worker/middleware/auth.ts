@@ -42,6 +42,7 @@ export const requireAuth: MiddlewareHandler<{ Bindings: Env; Variables: Variable
   });
   context.set('sessionId', session.id);
   context.set('csrfToken', session.csrf_token);
+  context.set('sessionExpiresAt', session.expires_at);
   if (!['GET', 'HEAD', 'OPTIONS'].includes(context.req.method)) {
     const supplied = context.req.header('X-CSRF-Token');
     if (!supplied || !timingSafeCompare(supplied, session.csrf_token)) {
@@ -51,6 +52,9 @@ export const requireAuth: MiddlewareHandler<{ Bindings: Env; Variables: Variable
   if (shouldTouchSession(session.last_seen_at, now)) {
     await context.env.DB.prepare(`UPDATE sessions SET last_seen_at = unixepoch() WHERE id = ? AND revoked_at IS NULL`)
       .bind(session.id).run();
+    context.set('sessionLastSeenAt', now);
+  } else {
+    context.set('sessionLastSeenAt', session.last_seen_at);
   }
   await next();
 };

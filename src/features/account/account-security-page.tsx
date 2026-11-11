@@ -24,7 +24,7 @@ interface SecurityOverview {
   security: {
     idleTimeoutMinutes: number;
     activeSessions: number;
-    mfa: { enabled: boolean; confirmedAt: number | null; recoveryCodesRemaining: number };
+    mfa: { enabled: boolean; confirmedAt: number | null; recoveryCodesRemaining: number; encryption: 'aes-256-gcm' | 'plaintext-dev' | 'unavailable' };
     lastLoginAt: number | null;
     lastLoginMethod: string | null;
   };
@@ -238,6 +238,13 @@ export function AccountSecurityPage() {
             <h2>Authenticator protection</h2>
             <KeyRound size={16} />
           </div>
+          <small style={{ display: 'block', marginBottom: '10px', color: 'var(--color-pewter)' }}>
+            {mfa.encryption === 'aes-256-gcm'
+              ? 'Stored secrets are sealed with AES-256-GCM using the deployment key.'
+              : mfa.encryption === 'plaintext-dev'
+                ? 'Development mode stores secrets without encryption. Configure MFA_ENCRYPTION_KEY before deploying.'
+                : 'Authenticator storage is not configured for this deployment. Contact an administrator.'}
+          </small>
 
           {mfaError && <div className="form-error" role="alert" style={{ marginBottom: '10px' }}>{mfaError}</div>}
 

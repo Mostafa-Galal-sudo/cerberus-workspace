@@ -28,7 +28,9 @@ Private engineering collaboration software for the CERBERUS graduation project. 
 - Server-generated CSV exports for tasks, roadmap progress, hardware inventory, and blockers, with role-scoped task rows, spreadsheet formula-injection neutralization, and `report_exports` audit records.
 - Server-rendered A4 PDF reports for roadmap progress, hardware inventory, and blockers using `pdf-lib`, with pagination, ASCII-safe text, export audit rows, and download links in the Reports page.
 - Workspace assistant grounded in live task/wiki/blocker/decision/member context with usage telemetry. An optional OpenAI-compatible provider adapter is gated by the persisted `assistant.enabled` setting and an `AI_API_KEY`; any provider failure falls back to the deterministic response.
-- Playwright end-to-end coverage for first-login password replacement, recovery requests, member route guards, administrative work reassignment, attachment upload/download/archive, and server-rendered PDF downloads against a production build and isolated local D1/R2 state.
+- Account security center with TOTP authenticator enrollment, ten single-use recovery codes, active-session revocation, and a paginated 90-day login history. Authenticator secrets are sealed with AES-256-GCM under `MFA_ENCRYPTION_KEY`; administrators can reset a locked-out authenticator, and a completed sign-in from a new network raises an in-app alert.
+- Client-side idle warning before the server session timeout, with an explicit "stay signed in" refresh, a Tab-trapped dialog, and automatic sign-out on expiry.
+- Playwright end-to-end coverage for first-login password replacement, recovery requests, member route guards, administrative work reassignment, attachment upload/download/archive, server-rendered PDF downloads, planning tabs and worklogs, authenticator enable/disable, assistant thread persistence, wiki rendering, and the command palette against a production build and isolated local D1/R2 state.
 
 ## Requirements
 
@@ -68,7 +70,7 @@ npm run build
 npm run test:e2e
 ```
 
-`npm test` runs the jsdom unit/component suite (72 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (76 tests across 12 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, realtime event publication, R2 attachments, submission-evidence access control, reassignment, server PDFs, workspace modules, GitHub webhooks and outbound guards, administration, backup checksums, CSV exports, and assistant telemetry. `npm run test:e2e` builds the production bundle, applies migrations to an isolated local D1/R2 state, and runs the Playwright suite (6 browser tests). Install the bundled browser with `npx playwright install chromium`; on Windows, an existing Edge installation can be used with `$env:E2E_BROWSER_CHANNEL='msedge'`.
+`npm test` runs the jsdom unit/component suite (126 tests). `npm run test:integration` runs the real Worker and Hono routes against an isolated D1 database using `@cloudflare/vitest-pool-workers` (104 tests across 16 files), applying every migration and exercising authentication, RBAC, password recovery, task/checkpoint review, multi-evidence persistence, task comments, realtime event publication, R2 attachments, submission-evidence access control, reassignment, server PDFs, workspace modules, GitHub webhooks and outbound guards, administration, backup checksums, CSV exports, assistant telemetry, and the phase 1–4 search, planning, assistant, TOTP-MFA, secret-sealing, and idle-session slices. `npm run test:e2e` builds the production bundle, applies migrations to an isolated local D1/R2 state, and runs the Playwright suite (12 browser tests). Install the bundled browser with `npx playwright install chromium`; on Windows, an existing Edge installation can be used with `$env:E2E_BROWSER_CHANNEL='msedge'`.
 
 ## Cloudflare deployment
 
@@ -80,8 +82,8 @@ Production is deployed at `https://cerberus-workspace.mosthistory139.workers.dev
 4. Enable R2 in the Cloudflare dashboard, then create the private evidence bucket: `npx wrangler r2 bucket create cerberus-attachments`
 5. Apply migrations: `npm run db:migrate:remote` (includes `0006` for realtime events, the email ledger, and R2-backed attachments, and `0007` for integrity guards)
 6. Deploy: `npm run deploy`
-7. Set the bootstrap secret now that the Worker exists: `npx wrangler secret put SETUP_TOKEN`
-8. Optionally configure live integrations: `EMAIL_PROVIDER`, `EMAIL_API_KEY`, and `EMAIL_FROM` for Resend or the Cloudflare Email binding; `GITHUB_TOKEN` for PAT authentication; or `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_INSTALLATION_ID` for GitHub App authentication.
+7. Set the bootstrap secret now that the Worker exists: `npx wrangler secret put SETUP_TOKEN`. Also set `MFA_ENCRYPTION_KEY` to a base64-encoded 32-byte key (`node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`); authenticator enrollment fails closed in production without it.
+8. Optionally configure live integrations: `EMAIL_PROVIDER`, `EMAIL_API_KEY`, and `EMAIL_FROM` for Resend or the Cloudflare Email binding; `GITHUB_WEBHOOK_SECRET` for environment-first webhook verification; `GITHUB_TOKEN` for PAT authentication; or `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, and `GITHUB_APP_INSTALLATION_ID` for GitHub App authentication. `SESSION_IDLE_MINUTES` overrides the 480-minute idle timeout.
 9. Call `/api/v1/setup/initialize` once using the setup secret, save the one-time temporary credentials, then delete the setup secret.
 
 Current production state (2026-10-25): migrations `0001`-`0010` are applied and Worker version `690cc2c8-2037-4ca5-a986-1301d597c305` is live. R2 is still not enabled on the account, so the deployment was published from the built config with the `r2_buckets` binding stripped and attachment routes return `503 ATTACHMENTS_UNAVAILABLE`; `npm run deploy` against the source config will fail until the bucket exists. After enabling R2 and creating `cerberus-attachments`, run `npm run deploy` to publish the binding. Email and GitHub outbound remain unconfigured and unverified.
@@ -95,6 +97,8 @@ Current production state (2026-10-25): migrations `0001`-`0010` are applied and 
 - Session tokens are random and only SHA-256 hashes are stored; the cookie is HttpOnly, SameSite Strict, and Secure in production.
 - Password-reset tokens are random, stored only as SHA-256 digests, valid for one hour, single-use, retired when reissued, and enforced with per-address throttling. Successful replacement revokes every existing session for the account.
 - State-changing authenticated requests require the per-session CSRF value.
+- Authenticator secrets are sealed with AES-256-GCM under a Worker secret (`MFA_ENCRYPTION_KEY`) and bound to their owner row; production refuses enrollment and verification when the key is missing instead of falling back to plaintext. Recovery codes are SHA-256 hashed and single use. Administrators can reset a member's authenticator, which revokes that member's sessions and is audited, but cannot reset their own.
+- Completed sign-ins from a network the account has not used before raise an in-app alert with a truncated network fingerprint. Sessions also expire after `SESSION_IDLE_MINUTES` of inactivity (default 480, clamped 5–10,080), and the client warns before the deadline without weakening the server-side check.
 - Authorization is enforced in the Worker. Client-side navigation is not a security boundary.
 - A submitter cannot administratively review their own submission, including Mostafa in member mode.
 - GitHub webhooks are verified with constant-time HMAC-SHA256 comparison; unsigned or malformed deliveries are rejected when a secret is configured.
@@ -110,3 +114,4 @@ Current production state (2026-10-25): migrations `0001`-`0010` are applied and 
 - The assistant calls an external OpenAI-compatible provider only when `assistant.enabled` is true and `AI_API_KEY` is configured; otherwise it uses the deterministic workspace-grounded responder. Provider responses are untrusted text and never execute tools.
 - Report exports are CSV, server-rendered PDF, and browser print. Backup restore is verification-only and does not overwrite live tables.
 - Playwright E2E requires a local Chromium download (`npx playwright install chromium`) or an installed Edge/Chrome channel.
+- Multi-factor authentication is opt-in: it is not enforced per role, and an administrator can reset a member's authenticator. New-network sign-in alerts are in-app only unless an email provider is configured.

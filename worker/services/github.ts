@@ -159,6 +159,14 @@ export async function syncRepository(env: Env, repository: string): Promise<Gith
   };
 }
 
+/**
+ * A deployment-level secret always wins over a value persisted in D1 so a
+ * stale or tampered integration setting cannot weaken webhook verification.
+ */
+export function resolveWebhookSecret(envSecret: string | undefined, configuredSecret: string | undefined): string | undefined {
+  return envSecret || configuredSecret;
+}
+
 export function extractTaskIds(text: string): string[] {
   return [...new Set(text.match(/task_[a-zA-Z0-9_-]+/g) ?? [])];
 }
