@@ -1704,4 +1704,36 @@ WHERE archived_at IS NULL;
 - Current ownership: Mostafa 5 (Embedded), Wessam 5 (AI), Khamis 5 (Networking), Yousif 5 (Wireless), Nabil 5 (Backend), Rozan 5 (Frontend).
 - Proposal: three sub-teams of two under one technical lead; five-layer architecture; three build phases with RF resilience as a stretch goal; supervisor Dr. Mai Shahin.
 
+## Appendix D — Applied status (2026-11-15)
+
+Sections 3 and 4 are **applied in production**, not a proposal. The owner held the only administrator password, so the four moves and the deputy grant were executed with `wrangler d1 execute --remote` against D1 `cerberus-workspace` instead of through the member dialog. Order, identifiers, and pairing match §4.1 exactly.
+
+Applied statements:
+
+- M1 `checkpoint_2_1`, `checkpoint_2_2`, `checkpoint_2_5` + `task_2_1`, `task_2_2`, `task_2_5`: Wessam → Khamis.
+- M2 `checkpoint_2_3`, `checkpoint_2_4` + `task_2_3`, `task_2_4`: Wessam → Mostafa.
+- M3 `checkpoint_1_1` + `task_1_1`: Mostafa → Wessam.
+- M4 `checkpoint_3_1`, `checkpoint_3_2` + `task_3_1`, `task_3_2`: Khamis → Wessam.
+- `INSERT OR IGNORE INTO user_roles ('user_khamis','role_admin')`.
+
+Verified immediately after the write:
+
+| Check | Result |
+|---|---|
+| Checkpoint owners | Khamis 6, Mostafa 6, Wessam 3, Yousif 5, Nabil 5, Rozan 5 (30 total) |
+| Task assignees | identical counts per member |
+| `checkpoint.owner_id <> task.assignee_id` pairs | 0 |
+| Khamis roles | `role_member`, `role_admin` |
+| Audit rows | 4 × `user.work_reassigned`, 1 × `user.roles_updated`, each carrying `"appliedVia":"wrangler-d1-cli"` |
+
+Two consequences of the out-of-band path, recorded deliberately:
+
+1. The member dialog would have written `work.reassigned` notifications and `workspace_events` for each target. The SQL path did not, so the six members will see the new work on their roadmap without an in-app notification.
+2. The audit rows were written by the migration, not by the route, and are marked as such so the provenance stays visible.
+
+Rollback: `docs/2026-11-15-ownership-rollback.sql` restores the pre-apply map, removes the deputy grant, and deletes the marked audit rows.
+
+Remaining manual step from §3: nothing. Steps 4 and 5 (rewriting the 30 task bodies and creating the cross-cutting tasks) are still open and are content work, not assignment work.
+
+
 

@@ -1,0 +1,2084 @@
+[
+  {
+    "coverage_id": "src%2Fcomponents%2Fmarkdown.tsx%23Markdown%20render::src%2Flib%2Fmarkdown-url.ts%23urlTransform%20allowlist::src%2F::ATTACK-CLASSES.md%23Injection",
+    "canonical_refs": {
+      "surface": "src/components/markdown.tsx#Markdown render",
+      "boundary": "src/lib/markdown-url.ts#urlTransform allowlist",
+      "subsystem": "src/",
+      "attack_class": "ATTACK-CLASSES.md#Injection"
+    },
+    "surface": "src/components/markdown.tsx#Markdown render",
+    "boundary": "src/lib/markdown-url.ts#urlTransform allowlist",
+    "subsystem": "src/",
+    "attack_class": "ATTACK-CLASSES.md#Injection",
+    "starting_paths": [
+      "src/components/markdown.tsx",
+      "src/lib/markdown-url.ts",
+      "src/app/route-guards.tsx",
+      "src/lib/api.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+    "selected_companion_blocks": [
+      "CLIENT-SIDE.md#Core discipline",
+      "CLIENT-SIDE.md#Universal moves",
+      "CLIENT-SIDE.md#Validation rules",
+      "CLIENT-SIDE.md#DOM and object-state attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "CLIENT-SIDE.md#Service-worker and browser-storage attack classes",
+        "reason": "No service worker or token in browser storage; session is an HttpOnly cookie."
+      },
+      {
+        "block": "CLIENT-SIDE.md#UI-redress and navigation attack classes",
+        "reason": "No framing or window.opener surface found in source during reconnaissance."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p6-client",
+    "reviewed_paths": [
+      "src/components/markdown.tsx",
+      "src/lib/markdown-url.ts",
+      "src/app/route-guards.tsx",
+      "src/lib/api.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "src/components/markdown.tsx",
+          "src/lib/markdown-url.ts"
+        ],
+        "invariant": "Raw HTML and dangerous URL schemes are removed before Markdown is rendered.",
+        "method": "source",
+        "result": "Confirmed: skipHtml plus a urlTransform allowlist that keeps only http, https, mailto, anchors, and relative paths.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "src/app/route-guards.tsx",
+          "src/lib/api.ts"
+        ],
+        "invariant": "Client route guards do not substitute for server authorization, and the CSRF token is not persisted beyond the tab.",
+        "method": "source",
+        "result": "Confirmed: AdminGate redirects non-admins while every API route enforces its own permission; the CSRF token lives in sessionStorage and is attached only to same-origin API calls.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U16",
+    "hardening_notes": [
+      "safeMarkdownUrl returns any value starting with a slash, so a protocol-relative //host link survives; the practical impact is low because absolute https links are already permitted, but rejecting // would match the stated allowlist."
+    ]
+  },
+  {
+    "coverage_id": "src%2Flib%2Fpalette.ts%23recent%20palette%20storage::src%2Flib%2Fpalette.ts%23isSafePaletteLink::src%2F::ATTACK-CLASSES.md%23Injection",
+    "canonical_refs": {
+      "surface": "src/lib/palette.ts#recent palette storage",
+      "boundary": "src/lib/palette.ts#isSafePaletteLink",
+      "subsystem": "src/",
+      "attack_class": "ATTACK-CLASSES.md#Injection"
+    },
+    "surface": "src/lib/palette.ts#recent palette storage",
+    "boundary": "src/lib/palette.ts#isSafePaletteLink",
+    "subsystem": "src/",
+    "attack_class": "ATTACK-CLASSES.md#Injection",
+    "starting_paths": [
+      "src/lib/palette.ts",
+      "src/lib/api.ts",
+      "src/app/route-guards.tsx",
+      "src/components/markdown.tsx"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+    "selected_companion_blocks": [
+      "HUNTING.md#Defensive vulnerability-finding method",
+      "HUNTING.md#Candidate gate",
+      "HUNTING.md#Local validation boundaries"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "MEMORY-SAFETY-AND-BINARY.md#Core discipline",
+        "reason": "No native or unsafe memory handling in this surface; the runtime is a TypeScript Worker or a React client."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p6-client",
+    "reviewed_paths": [
+      "src/lib/palette.ts",
+      "src/lib/api.ts",
+      "src/app/route-guards.tsx",
+      "src/components/markdown.tsx"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "src/lib/palette.ts"
+        ],
+        "invariant": "Locally stored navigation targets cannot become protocol-relative or script URLs.",
+        "method": "source",
+        "result": "Confirmed: isSafePaletteLink requires a single leading slash, rejects //, backslashes, and control characters, and loadRecentPaletteItems re-validates every stored record.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "src/lib/api.ts",
+          "src/app/route-guards.tsx",
+          "src/components/markdown.tsx"
+        ],
+        "invariant": "Browser storage holds no session secret and the client exposes no raw HTML sink.",
+        "method": "source",
+        "result": "Confirmed: sessionStorage holds only the CSRF token, the session cookie is HttpOnly, and a source search found no dangerouslySetInnerHTML, innerHTML, eval, or new Function in src/.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "hardening_notes": [],
+    "_unit": "U28"
+  },
+  {
+    "coverage_id": "worker%2Findex.ts%23%2Fapi%2F%2A%20middleware::worker%2Findex.ts%23Origin%20allow-list%20and%20CORS::worker%2Findex.ts::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+    "canonical_refs": {
+      "surface": "worker/index.ts#/api/* middleware",
+      "boundary": "worker/index.ts#Origin allow-list and CORS",
+      "subsystem": "worker/index.ts",
+      "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage"
+    },
+    "surface": "worker/index.ts#/api/* middleware",
+    "boundary": "worker/index.ts#Origin allow-list and CORS",
+    "subsystem": "worker/index.ts",
+    "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "starting_paths": [
+      "worker/index.ts",
+      "public/_headers",
+      "src/lib/api.ts",
+      "worker/routes/attachments.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "selected_companion_blocks": [
+      "CLIENT-SIDE.md#Core discipline",
+      "CLIENT-SIDE.md#Universal moves",
+      "CLIENT-SIDE.md#Validation rules",
+      "CLIENT-SIDE.md#Cross-site information leak classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "CLIENT-SIDE.md#DOM and object-state attack classes",
+        "reason": "Header and CORS decisions are made before any DOM interaction."
+      },
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Ingress, network, and control-plane attack classes",
+        "reason": "Worker ingress is the only edge in scope; no load balancer or WAF config exists in source."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p6-client",
+    "reviewed_paths": [
+      "worker/index.ts",
+      "src/lib/api.ts",
+      "public/_headers",
+      "worker/routes/attachments.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "worker/index.ts",
+          "src/lib/api.ts"
+        ],
+        "invariant": "Cross-origin state-changing requests are rejected by an exact origin allow-list that fails closed in production.",
+        "method": "source",
+        "result": "Confirmed: production requires an exact APP_ORIGIN match, there is no wildcard, and preflight returns 204 only for the configured origin.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "worker/index.ts",
+          "public/_headers",
+          "worker/routes/attachments.ts"
+        ],
+        "invariant": "Security headers are applied to API and static responses.",
+        "method": "source",
+        "result": "Confirmed: CSP, HSTS, nosniff, frame DENY, no-referrer, and no-store are set, and the static shell repeats them.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U17",
+    "hardening_notes": []
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Faccount.ts%23POST%20%2Fapi%2Fv1%2Faccount%2Fsessions%2F%3AsessionId%2Frevoke::worker%2Froutes%2Faccount.ts%23self-scope%20session%20guard::worker%2Froutes%2Faccount.ts::ATTACK-CLASSES.md%23Business%20logic",
+    "canonical_refs": {
+      "surface": "worker/routes/account.ts#POST /api/v1/account/sessions/:sessionId/revoke",
+      "boundary": "worker/routes/account.ts#self-scope session guard",
+      "subsystem": "worker/routes/account.ts",
+      "attack_class": "ATTACK-CLASSES.md#Business logic"
+    },
+    "surface": "worker/routes/account.ts#POST /api/v1/account/sessions/:sessionId/revoke",
+    "boundary": "worker/routes/account.ts#self-scope session guard",
+    "subsystem": "worker/routes/account.ts",
+    "attack_class": "ATTACK-CLASSES.md#Business logic",
+    "starting_paths": [
+      "worker/routes/account.ts",
+      "worker/middleware/auth.ts",
+      "worker/services/session-security.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Business logic",
+    "selected_companion_blocks": [
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Deletion, revocation, and lifecycle attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "ATTACK-CLASSES.md#Injection",
+        "reason": "Session identifiers are bound SQL parameters, not parser input."
+      },
+      {
+        "block": "AI-AND-LLM.md#Tool and action attack classes",
+        "reason": "Account security operations never invoke model tools."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p2-authz",
+    "reviewed_paths": [
+      "worker/routes/account.ts",
+      "worker/middleware/auth.ts",
+      "worker/services/session-security.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p2-authz",
+        "reviewed_paths": [
+          "worker/routes/account.ts",
+          "worker/middleware/auth.ts"
+        ],
+        "invariant": "A member can revoke only their own sessions.",
+        "method": "source",
+        "result": "Confirmed: the revoke statement filters on both session id and user_id, and the account overview lists only the caller rows.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p2-authz",
+        "reviewed_paths": [
+          "worker/routes/account.ts",
+          "worker/services/session-security.ts"
+        ],
+        "invariant": "Revoking all other sessions preserves the current one and every revocation is audited.",
+        "method": "source",
+        "result": "Confirmed: revoke-all excludes context sessionId and both paths write an audit row plus a workspace event.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U04",
+    "hardening_notes": []
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fadmin.ts%23PATCH%20%2Fapi%2Fv1%2Fadmin%2Fsettings::worker%2Fmiddleware%2Fauth.ts%23requirePermission%28%27workspace.admin%27%29::worker%2F::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "worker/routes/admin.ts#PATCH /api/v1/admin/settings",
+      "boundary": "worker/middleware/auth.ts#requirePermission('workspace.admin')",
+      "subsystem": "worker/",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "worker/routes/admin.ts#PATCH /api/v1/admin/settings",
+    "boundary": "worker/middleware/auth.ts#requirePermission('workspace.admin')",
+    "subsystem": "worker/",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "worker/routes/admin.ts",
+      "worker/routes/dashboard.ts",
+      "worker/routes/setup.ts",
+      "worker/middleware/auth.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [
+      "HUNTING.md#Defensive vulnerability-finding method",
+      "HUNTING.md#Candidate gate",
+      "HUNTING.md#Local validation boundaries"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "MEMORY-SAFETY-AND-BINARY.md#Core discipline",
+        "reason": "No native or unsafe memory handling in this surface; the runtime is a TypeScript Worker."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p6-client",
+    "reviewed_paths": [
+      "worker/routes/admin.ts",
+      "worker/middleware/auth.ts",
+      "worker/routes/dashboard.ts",
+      "worker/routes/setup.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "worker/routes/admin.ts",
+          "worker/middleware/auth.ts"
+        ],
+        "invariant": "Administrative metrics, settings, role changes, and backup operations require workspace.admin.",
+        "method": "source",
+        "result": "Confirmed: the admin router applies requireAuth, requirePasswordChanged, and requirePermission(workspace.admin) to every route.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "worker/routes/dashboard.ts"
+        ],
+        "invariant": "Dashboard aggregates are limited to admins and supervisors, and members receive only their own summary.",
+        "method": "source",
+        "result": "Confirmed: the team branch requires super_admin (unless mode=member) or project_supervisor; otherwise the query filters on the caller.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "worker/routes/setup.ts"
+        ],
+        "invariant": "Initialization is token-gated, one-time, and disabled after seeding.",
+        "method": "source",
+        "result": "Confirmed: the setup token is compared in constant time, the route refuses to run once users exist, and the production secret is deleted after initialization.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "hardening_notes": [
+      "PATCH /admin/settings stores any key and any JSON value supplied by an administrator; it is admin-only, but an allow-list of known keys would keep the settings table from becoming an untyped store."
+    ],
+    "_unit": "U25"
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fassistant.ts%23POST%20%2Fapi%2Fv1%2Fassistant%2Fchat::worker%2Fservices%2Fai.ts%23AI_API_KEY%20and%20assistant.enabled%20gate::worker%2Fservices%2Fai.ts::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+    "canonical_refs": {
+      "surface": "worker/routes/assistant.ts#POST /api/v1/assistant/chat",
+      "boundary": "worker/services/ai.ts#AI_API_KEY and assistant.enabled gate",
+      "subsystem": "worker/services/ai.ts",
+      "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage"
+    },
+    "surface": "worker/routes/assistant.ts#POST /api/v1/assistant/chat",
+    "boundary": "worker/services/ai.ts#AI_API_KEY and assistant.enabled gate",
+    "subsystem": "worker/services/ai.ts",
+    "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "starting_paths": [
+      "worker/services/ai.ts",
+      "worker/services/assistant.ts",
+      "worker/routes/assistant.ts",
+      "worker/routes/admin.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "selected_companion_blocks": [
+      "AI-AND-LLM.md#Core discipline",
+      "AI-AND-LLM.md#Universal moves",
+      "AI-AND-LLM.md#Validation rules",
+      "AI-AND-LLM.md#Output and disclosure attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Tool and action attack classes",
+        "reason": "Provider call happens after tool selection; tools are covered by U14."
+      },
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Configuration and secret lifecycle attack classes",
+        "reason": "Provider key handling is covered by U20."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p5-integrations",
+    "reviewed_paths": [
+      "worker/services/ai.ts",
+      "worker/routes/assistant.ts",
+      "worker/routes/admin.ts",
+      "worker/services/assistant.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/services/ai.ts",
+          "worker/routes/assistant.ts",
+          "worker/routes/admin.ts"
+        ],
+        "invariant": "The assistant stays disabled unless a provider key is configured, and usage is rate-limited.",
+        "method": "source",
+        "result": "Confirmed: the assistant.enabled setting and AI_API_KEY gate the call, a deterministic fallback answers otherwise, and each user has a rate limit.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/services/ai.ts",
+          "worker/services/assistant.ts"
+        ],
+        "invariant": "Prompts cannot redirect the provider call to an arbitrary host or exfiltrate secrets.",
+        "method": "source",
+        "result": "Confirmed: the base URL and model come from environment configuration only, and no secret is interpolated into the prompt or returned in the reply.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U15",
+    "hardening_notes": []
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fassistant.ts%23POST%20%2Fapi%2Fv1%2Fassistant%2Fthreads%2F%3AthreadId%2Fmessages::worker%2Fservices%2Fassistant.ts%23server-fixed%20tool%20registry::worker%2Fservices%2Fassistant.ts::ATTACK-CLASSES.md%23Injection",
+    "canonical_refs": {
+      "surface": "worker/routes/assistant.ts#POST /api/v1/assistant/threads/:threadId/messages",
+      "boundary": "worker/services/assistant.ts#server-fixed tool registry",
+      "subsystem": "worker/services/assistant.ts",
+      "attack_class": "ATTACK-CLASSES.md#Injection"
+    },
+    "surface": "worker/routes/assistant.ts#POST /api/v1/assistant/threads/:threadId/messages",
+    "boundary": "worker/services/assistant.ts#server-fixed tool registry",
+    "subsystem": "worker/services/assistant.ts",
+    "attack_class": "ATTACK-CLASSES.md#Injection",
+    "starting_paths": [
+      "worker/services/assistant.ts",
+      "worker/routes/assistant.ts",
+      "worker/services/ai.ts",
+      "worker/services/search.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Injection",
+    "selected_companion_blocks": [
+      "AI-AND-LLM.md#Core discipline",
+      "AI-AND-LLM.md#Universal moves",
+      "AI-AND-LLM.md#Validation rules",
+      "AI-AND-LLM.md#Tool and action attack classes",
+      "AI-AND-LLM.md#Context, retrieval, and memory attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#MCP and sub-agent trust classes",
+        "reason": "No MCP server or sub-agent delegation exists in the assistant path."
+      },
+      {
+        "block": "CLIENT-SIDE.md#DOM and object-state attack classes",
+        "reason": "Assistant replies render through the shared markdown component covered by U16."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p5-integrations",
+    "reviewed_paths": [
+      "worker/routes/assistant.ts",
+      "worker/services/assistant.ts",
+      "worker/services/ai.ts",
+      "worker/services/search.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/routes/assistant.ts"
+        ],
+        "invariant": "Assistant threads and messages are scoped to their owner.",
+        "method": "source",
+        "result": "Confirmed: every thread read, rename, archive, and message query filters on user_id, and a foreign thread id returns 404.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/services/assistant.ts",
+          "worker/services/ai.ts",
+          "worker/services/search.ts"
+        ],
+        "invariant": "Assistant tools are a fixed server-side registry with read-only effects.",
+        "method": "source",
+        "result": "Confirmed: tool names come from a constant map, there is no shell or write tool, and every citation is labelled server-retrieved rather than model-verified.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U14",
+    "hardening_notes": []
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fattachments.ts%23GET%20%2Fapi%2Fv1%2Fattachments%2F%3Aid%2Fdownload::worker%2Froutes%2Fattachments.ts%23canView%20and%20canAttach::worker%2Froutes%2Fattachments.ts::ATTACK-CLASSES.md%23Resource%20and%20file%20handling",
+    "canonical_refs": {
+      "surface": "worker/routes/attachments.ts#GET /api/v1/attachments/:id/download",
+      "boundary": "worker/routes/attachments.ts#canView and canAttach",
+      "subsystem": "worker/routes/attachments.ts",
+      "attack_class": "ATTACK-CLASSES.md#Resource and file handling"
+    },
+    "surface": "worker/routes/attachments.ts#GET /api/v1/attachments/:id/download",
+    "boundary": "worker/routes/attachments.ts#canView and canAttach",
+    "subsystem": "worker/routes/attachments.ts",
+    "attack_class": "ATTACK-CLASSES.md#Resource and file handling",
+    "starting_paths": [
+      "worker/routes/attachments.ts",
+      "worker/services/wiki-access.ts",
+      "shared/url.ts",
+      "worker/types.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Resource and file handling",
+    "selected_companion_blocks": [
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Derived-data and disclosure attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "ATTACK-CLASSES.md#Injection",
+        "reason": "Download path does not interpret file content; HTML rendering happens client-side in another unit."
+      },
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Container and orchestration attack classes",
+        "reason": "R2 binding is a managed object store, no container runtime in path."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "p4-data",
+    "reviewed_paths": [
+      "worker/routes/attachments.ts",
+      "worker/services/wiki-access.ts",
+      "shared/url.ts",
+      "worker/types.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/attachments.ts",
+          "worker/services/wiki-access.ts"
+        ],
+        "invariant": "Submission evidence is readable only by the submitter and by reviewers or administrators.",
+        "method": "source",
+        "result": "Confirmed: the submission branch of canView compares submitted_by and requires review.admin or workspace.admin.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/attachments.ts"
+        ],
+        "invariant": "Evidence attached to an approved submission is immutable.",
+        "method": "source",
+        "result": "Candidate: canAttach for submissions (attachments.ts:48-50) checks only submitted_by or review.admin and never reads submissions.status, and DELETE (attachments.ts:207-238) archives the row and deletes the R2 object with no status guard.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/attachments.ts",
+          "shared/url.ts",
+          "worker/types.ts"
+        ],
+        "invariant": "Attachment responses cannot be used for stored script execution or open redirects.",
+        "method": "source",
+        "result": "Confirmed: downloads force a sanitized Content-Disposition filename and a stored content type, and returned URLs must be the internal attachment path or pass safeHttpUrl.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "evidence.post-approval-attachment-mutation"
+    ],
+    "unresolved": [],
+    "_unit": "U09",
+    "hardening_notes": [
+      "canView returns true for task, checkpoint, bug, blocker, and experiment attachments for every authenticated user, which matches the team-wide transparency model but is broader than the submission rule.",
+      "evidence.post-approval-attachment-mutation survived verification with a corrected surface: the exercisable path is the task attachment panel (task-detail-page.tsx:471, canWork at :299), because the review queue reads submission_evidence (reviews.ts:226) and no client renders attachments for resourceType=submission. Attachments on an approved task can still be uploaded and archived while tasks.status and approved_at stay unchanged.",
+      "The submission branch of canAttach (attachments.ts:48) has the same missing status predicate, but it is unreachable from the shipped client; it stays recorded as a latent gap rather than a demonstrated one."
+    ]
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fauth.ts%23POST%20%2Fapi%2Fv1%2Fauth%2Flogin%2Fmfa::worker%2Fservices%2Fmfa.ts%23verifyTotp::worker%2Fservices%2Fmfa.ts::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "worker/routes/auth.ts#POST /api/v1/auth/login/mfa",
+      "boundary": "worker/services/mfa.ts#verifyTotp",
+      "subsystem": "worker/services/mfa.ts",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "worker/routes/auth.ts#POST /api/v1/auth/login/mfa",
+    "boundary": "worker/services/mfa.ts#verifyTotp",
+    "subsystem": "worker/services/mfa.ts",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "worker/routes/auth.ts",
+      "worker/services/mfa.ts",
+      "worker/services/mfa-secret.ts",
+      "worker/routes/account.ts",
+      "shared/schemas/account.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "DATA-ISOLATION-AND-LIFECYCLE.md#Export, backup, restore, and migration attack classes",
+        "reason": "MFA state is not exported through report or backup surfaces in this unit."
+      },
+      {
+        "block": "AI-AND-LLM.md#Context, retrieval, and memory attack classes",
+        "reason": "No retrieval or model context in the challenge path."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "p1-authn",
+    "reviewed_paths": [
+      "worker/routes/account.ts",
+      "shared/schemas/account.ts",
+      "worker/routes/auth.ts",
+      "worker/services/mfa.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p1-authn",
+        "reviewed_paths": [
+          "worker/routes/account.ts",
+          "shared/schemas/account.ts"
+        ],
+        "invariant": "Enrolling or replacing an authenticator requires proof of the current password, like disabling it does.",
+        "method": "source",
+        "result": "Candidate: /mfa/setup (account.ts:177) and /mfa/confirm (account.ts:221) require only a valid session, while /mfa/disable (account.ts:279) and /mfa/recovery-codes (account.ts:333) verify the current password before acting.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p1-authn",
+        "reviewed_paths": [
+          "worker/routes/auth.ts",
+          "worker/services/mfa.ts"
+        ],
+        "invariant": "A TOTP step is accepted at most once per account.",
+        "method": "source",
+        "result": "Candidate: last_used_step is read at auth.ts:119 and compared at auth.ts:162, then written at auth.ts:202-203 without a conditional predicate, so two concurrent logins with the same code both pass the check.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p1-authn",
+        "reviewed_paths": [
+          "worker/routes/auth.ts",
+          "worker/services/mfa.ts"
+        ],
+        "invariant": "A recovery code is removed exactly once, even under concurrent use.",
+        "method": "source",
+        "result": "Candidate: auth.ts:165-169 derives the remaining hash array from the challenge snapshot, and auth.ts:205 writes the whole array back. Two concurrent redemptions of different codes each overwrite the other, restoring one consumed code.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "auth.mfa-enroll-no-reauth",
+      "auth.totp-step-race",
+      "auth.recovery-code-race"
+    ],
+    "unresolved": [],
+    "_unit": "U03",
+    "hardening_notes": [
+      "verifyTotp explicitly documents that callers must reject a consumed step, so the missing conditional update is a contract gap rather than an unknown requirement.",
+      "Two concurrent /mfa/confirm calls can both return recovery codes while only one set is persisted, because the UPDATE is guarded by confirmed_at IS NULL but the response is not."
+    ]
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fauth.ts%23POST%20%2Fapi%2Fv1%2Fauth%2Flogin::worker%2Fmiddleware%2Fauth.ts%23requireAuth::worker%2Froutes%2Fauth.ts::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "worker/routes/auth.ts#POST /api/v1/auth/login",
+      "boundary": "worker/middleware/auth.ts#requireAuth",
+      "subsystem": "worker/routes/auth.ts",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "worker/routes/auth.ts#POST /api/v1/auth/login",
+    "boundary": "worker/middleware/auth.ts#requireAuth",
+    "subsystem": "worker/routes/auth.ts",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "worker/routes/auth.ts",
+      "worker/middleware/auth.ts",
+      "worker/services/session-security.ts",
+      "shared/schemas/auth.ts",
+      "worker/services/security.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Tool and action attack classes",
+        "reason": "Login path never reaches model or tool invocation."
+      },
+      {
+        "block": "PROTOCOLS-RPC-AND-MESSAGING.md#Replay, ordering, and transaction attack classes",
+        "reason": "No protocol peer or broker in the credential path."
+      },
+      {
+        "block": "CLIENT-SIDE.md#DOM and object-state attack classes",
+        "reason": "Server-side handler; client rendering is a separate unit."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "p1-authn",
+    "reviewed_paths": [
+      "worker/routes/auth.ts",
+      "worker/middleware/auth.ts",
+      "worker/services/session-security.ts",
+      "worker/services/security.ts",
+      "shared/schemas/auth.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p1-authn",
+        "reviewed_paths": [
+          "worker/routes/auth.ts",
+          "worker/middleware/auth.ts",
+          "worker/services/session-security.ts"
+        ],
+        "invariant": "A session is issued only after credential verification and is bound to a hashed server-side token with idle and absolute expiry.",
+        "method": "source",
+        "result": "Confirmed: login verifies the PBKDF2 hash, stores only the SHA-256 token hash, sets __Host- HttpOnly SameSite=Strict Secure cookie in production, and requireAuth enforces absolute expiry plus the idle timeout on every request.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p1-authn",
+        "reviewed_paths": [
+          "worker/routes/auth.ts"
+        ],
+        "invariant": "A password-reset token is redeemed at most once.",
+        "method": "source",
+        "result": "Candidate: auth.ts:304-307 reads the token with used_at IS NULL, then auth.ts:315 marks it used with an unconditional UPDATE. Two concurrent redemptions can both pass the SELECT and both write a new password hash.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p1-authn",
+        "reviewed_paths": [
+          "worker/routes/auth.ts",
+          "worker/services/security.ts",
+          "shared/schemas/auth.ts"
+        ],
+        "invariant": "Login and reset-request responses do not disclose whether an account exists.",
+        "method": "source",
+        "result": "Confirmed: unknown accounts still run a dummy PBKDF2 comparison and return INVALID_CREDENTIALS; request-password-reset returns 202 for every address and only notifies admins when delivery is unconfigured.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "auth.reset-token-race"
+    ],
+    "unresolved": [],
+    "_unit": "U01",
+    "hardening_notes": [
+      "The reset request invalidates older tokens (auth.ts:253) but the redemption path does not re-check the token row after the batch, so a lost race is silent."
+    ]
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fauth.ts%23POST%20%2Fapi%2Fv1%2Fauth%2Flogin::worker%2Fservices%2Fsecurity.ts%23hashPassword::worker%2Fservices%2Fsecurity.ts::ATTACK-CLASSES.md%23Cryptography%20and%20secrets",
+    "canonical_refs": {
+      "surface": "worker/routes/auth.ts#POST /api/v1/auth/login",
+      "boundary": "worker/services/security.ts#hashPassword",
+      "subsystem": "worker/services/security.ts",
+      "attack_class": "ATTACK-CLASSES.md#Cryptography and secrets"
+    },
+    "surface": "worker/routes/auth.ts#POST /api/v1/auth/login",
+    "boundary": "worker/services/security.ts#hashPassword",
+    "subsystem": "worker/services/security.ts",
+    "attack_class": "ATTACK-CLASSES.md#Cryptography and secrets",
+    "starting_paths": [
+      "worker/services/security.ts",
+      "worker/routes/auth.ts",
+      "worker/services/mfa.ts",
+      "worker/services/mfa-secret.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Cryptography and secrets",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "CLIENT-SIDE.md#DOM and object-state attack classes",
+        "reason": "Secret handling is entirely server-side."
+      },
+      {
+        "block": "AI-AND-LLM.md#Output and disclosure attack classes",
+        "reason": "No model path handles these secrets."
+      },
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Workload identity and IAM attack classes",
+        "reason": "No cloud identity selector is involved in token derivation."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p1-authn",
+    "reviewed_paths": [
+      "worker/services/security.ts",
+      "worker/routes/auth.ts",
+      "worker/services/mfa.ts",
+      "worker/services/mfa-secret.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p1-authn",
+        "reviewed_paths": [
+          "worker/services/security.ts",
+          "worker/routes/auth.ts"
+        ],
+        "invariant": "Passwords are stored with a salted slow KDF and compared in constant time.",
+        "method": "source",
+        "result": "Confirmed: PBKDF2-SHA256 with a per-hash random salt, 100,000 iterations (the Workers WebCrypto ceiling recorded in the project notes), and timingSafeCompare for digest comparison.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p1-authn",
+        "reviewed_paths": [
+          "worker/services/mfa.ts",
+          "worker/services/mfa-secret.ts"
+        ],
+        "invariant": "TOTP secrets are sealed at rest and never fall back to plaintext in production.",
+        "method": "source",
+        "result": "Confirmed: AES-256-GCM with user_mfa:<user id> as additional authenticated data; production without a valid 32-byte MFA_ENCRYPTION_KEY returns 503 MFA_UNAVAILABLE instead of storing a plaintext secret.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p1-authn",
+        "reviewed_paths": [
+          "worker/services/mfa.ts",
+          "worker/routes/auth.ts"
+        ],
+        "invariant": "Security tokens have sufficient entropy and are stored hashed.",
+        "method": "source",
+        "result": "Confirmed: 32 random bytes for session, reset, and activation tokens, stored as SHA-256 hashes; recovery codes are 8 symbols from a 32-symbol alphabet hashed with unsalted SHA-256.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U02",
+    "hardening_notes": [
+      "Recovery codes carry about 40 bits of entropy and are stored as unsalted SHA-256, so a database disclosure would allow offline enumeration; a keyed hash or longer code would raise the cost."
+    ]
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fcollaboration.ts%23GET%20%2Fapi%2Fv1%2Fcollaboration%2Fevents::worker%2Fservices%2Fevents.ts%23per-user%20event%20stream::worker%2F::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+    "canonical_refs": {
+      "surface": "worker/routes/collaboration.ts#GET /api/v1/collaboration/events",
+      "boundary": "worker/services/events.ts#per-user event stream",
+      "subsystem": "worker/",
+      "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage"
+    },
+    "surface": "worker/routes/collaboration.ts#GET /api/v1/collaboration/events",
+    "boundary": "worker/services/events.ts#per-user event stream",
+    "subsystem": "worker/",
+    "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "starting_paths": [
+      "worker/routes/collaboration.ts",
+      "worker/services/events.ts",
+      "worker/routes/notifications.ts",
+      "shared/schemas/workspace.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "selected_companion_blocks": [
+      "HUNTING.md#Defensive vulnerability-finding method",
+      "HUNTING.md#Candidate gate",
+      "HUNTING.md#Local validation boundaries"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "MEMORY-SAFETY-AND-BINARY.md#Core discipline",
+        "reason": "No native or unsafe memory handling in this surface; the runtime is a TypeScript Worker."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p5-integrations",
+    "reviewed_paths": [
+      "worker/routes/collaboration.ts",
+      "worker/services/events.ts",
+      "shared/schemas/workspace.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/routes/collaboration.ts",
+          "worker/services/events.ts"
+        ],
+        "invariant": "Realtime and polled workspace events are scoped to the recipient.",
+        "method": "source",
+        "result": "Confirmed: listWorkspaceEvents filters on user_id, and both the SSE loop and the poll route pass the authenticated user id.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/routes/collaboration.ts"
+        ],
+        "invariant": "Channel reads and writes require membership, and deletion is limited to the author or a super admin.",
+        "method": "source",
+        "result": "Confirmed: channelAllowed guards message list, post, read, and edit; delete checks author_id or super_admin; posting is rate-limited to 60 per minute.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/routes/collaboration.ts",
+          "shared/schemas/workspace.ts"
+        ],
+        "invariant": "Announcement visibility matches the caller audience and only admins publish.",
+        "method": "source",
+        "result": "Confirmed: announcementAudiences builds the audience list, the query filters audience IN (...), and publication requires workspace.admin.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "hardening_notes": [],
+    "_unit": "U24"
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fexperiments.ts%23POST%20%2Fapi%2Fv1%2Fexperiments%2F%3Aid%2Fruns::worker%2Froutes%2Fexperiments.ts%23owner%20or%20super_admin%20guard::worker%2F::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "worker/routes/experiments.ts#POST /api/v1/experiments/:id/runs",
+      "boundary": "worker/routes/experiments.ts#owner or super_admin guard",
+      "subsystem": "worker/",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "worker/routes/experiments.ts#POST /api/v1/experiments/:id/runs",
+    "boundary": "worker/routes/experiments.ts#owner or super_admin guard",
+    "subsystem": "worker/",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "worker/routes/experiments.ts",
+      "shared/schemas/workspace.ts",
+      "worker/services/csv.ts",
+      "worker/services/wiki-access.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [
+      "HUNTING.md#Defensive vulnerability-finding method",
+      "HUNTING.md#Candidate gate",
+      "HUNTING.md#Local validation boundaries"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "MEMORY-SAFETY-AND-BINARY.md#Core discipline",
+        "reason": "No native or unsafe memory handling in this surface; the runtime is a TypeScript Worker."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p4-data",
+    "reviewed_paths": [
+      "worker/routes/experiments.ts",
+      "shared/schemas/workspace.ts",
+      "worker/services/csv.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/experiments.ts"
+        ],
+        "invariant": "Only the experiment owner or a super admin can record a run, and supervisors are read-only.",
+        "method": "source",
+        "result": "Confirmed: the run route rejects supervisors, loads owner_id, and returns FORBIDDEN unless the caller is the owner or has super_admin.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/experiments.ts",
+          "shared/schemas/workspace.ts"
+        ],
+        "invariant": "Run metrics are schema-validated before insert.",
+        "method": "source",
+        "result": "Confirmed: experimentRunSchema validates each metric name, numeric or text value, unit, and observed flag before the batch insert.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/experiments.ts",
+          "worker/services/csv.ts"
+        ],
+        "invariant": "Run exports are scoped to the experiment, paginated, and CSV-safe.",
+        "method": "source",
+        "result": "Confirmed: the export filters by experiment id, clamps page and limit, records an audit row, and passes cells through toCsv.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "hardening_notes": [],
+    "_unit": "U23"
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fgithub.ts%23POST%20%2Fapi%2Fv1%2Fgithub%2Fwebhook::worker%2Fservices%2Fsecurity.ts%23verifyGithubSignature::worker%2Froutes%2Fgithub.ts::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "worker/routes/github.ts#POST /api/v1/github/webhook",
+      "boundary": "worker/services/security.ts#verifyGithubSignature",
+      "subsystem": "worker/routes/github.ts",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "worker/routes/github.ts#POST /api/v1/github/webhook",
+    "boundary": "worker/services/security.ts#verifyGithubSignature",
+    "subsystem": "worker/routes/github.ts",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "worker/routes/github.ts",
+      "worker/services/github.ts",
+      "worker/services/security.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [
+      "PROTOCOLS-RPC-AND-MESSAGING.md#Core discipline",
+      "PROTOCOLS-RPC-AND-MESSAGING.md#Universal moves",
+      "PROTOCOLS-RPC-AND-MESSAGING.md#Validation rules",
+      "PROTOCOLS-RPC-AND-MESSAGING.md#Replay, ordering, and transaction attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Workload identity and IAM attack classes",
+        "reason": "GitHub App token issuance is outbound auth, not cloud IAM selector."
+      },
+      {
+        "block": "AI-AND-LLM.md#Tool and action attack classes",
+        "reason": "No model tool reaches the webhook path."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p5-integrations",
+    "reviewed_paths": [
+      "worker/routes/github.ts",
+      "worker/services/security.ts",
+      "worker/services/github.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/routes/github.ts",
+          "worker/services/security.ts"
+        ],
+        "invariant": "Webhook requests must carry a valid HMAC signature and are processed idempotently.",
+        "method": "source",
+        "result": "Confirmed: timing-safe HMAC verification with the environment secret taking precedence, delivery-id idempotency, and 503 INTEGRATION_DISABLED when unconfigured.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/services/github.ts"
+        ],
+        "invariant": "Outbound GitHub calls use server-side credentials and never echo them.",
+        "method": "source",
+        "result": "Confirmed: tokens and app keys are read from env only, request URLs are built from the configured API base, and no credential is written to a response or audit row.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U13",
+    "hardening_notes": []
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fhardware.ts%23POST%20%2Fapi%2Fv1%2Fhardware%2F%3Aid%2Fcheckout::worker%2Froutes%2Fhardware.ts%23atomic%20availability%20predicate::worker%2F::ATTACK-CLASSES.md%23Business%20logic",
+    "canonical_refs": {
+      "surface": "worker/routes/hardware.ts#POST /api/v1/hardware/:id/checkout",
+      "boundary": "worker/routes/hardware.ts#atomic availability predicate",
+      "subsystem": "worker/",
+      "attack_class": "ATTACK-CLASSES.md#Business logic"
+    },
+    "surface": "worker/routes/hardware.ts#POST /api/v1/hardware/:id/checkout",
+    "boundary": "worker/routes/hardware.ts#atomic availability predicate",
+    "subsystem": "worker/",
+    "attack_class": "ATTACK-CLASSES.md#Business logic",
+    "starting_paths": [
+      "worker/routes/hardware.ts",
+      "shared/schemas/workspace.ts",
+      "worker/services/wiki-access.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Business logic",
+    "selected_companion_blocks": [
+      "HUNTING.md#Defensive vulnerability-finding method",
+      "HUNTING.md#Candidate gate",
+      "HUNTING.md#Local validation boundaries"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "MEMORY-SAFETY-AND-BINARY.md#Core discipline",
+        "reason": "No native or unsafe memory handling in this surface; the runtime is a TypeScript Worker."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p4-data",
+    "reviewed_paths": [
+      "worker/routes/hardware.ts",
+      "worker/services/wiki-access.ts",
+      "shared/schemas/workspace.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/hardware.ts"
+        ],
+        "invariant": "Checkout cannot exceed available quantity under concurrency.",
+        "method": "source",
+        "result": "Confirmed: the INSERT ... SELECT carries the availability predicate inside the statement and the route rejects a zero change count, so two concurrent checkouts cannot both consume the same units.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/hardware.ts",
+          "worker/services/wiki-access.ts"
+        ],
+        "invariant": "Only workspace admins mutate inventory, and a return is limited to the holder or an admin.",
+        "method": "source",
+        "result": "Confirmed: create, checkout, and maintenance require workspace.admin; the return path accepts the holder or isWorkspaceAdmin and writes an audit row.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/hardware.ts",
+          "shared/schemas/workspace.ts"
+        ],
+        "invariant": "Serialized items are single units and unavailable or damaged items are rejected.",
+        "method": "source",
+        "result": "Confirmed: serialized tracking forces quantity 1, and purchase_status other than available or a retired/damaged condition returns ITEM_UNAVAILABLE.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "hardening_notes": [],
+    "_unit": "U22"
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fnotifications.ts%23PUT%20%2Fapi%2Fv1%2Fnotifications%2Fpreferences::worker%2Fservices%2Fnotifications.ts%23per-user%20preference%20and%20digest%20scoping::worker%2F::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+    "canonical_refs": {
+      "surface": "worker/routes/notifications.ts#PUT /api/v1/notifications/preferences",
+      "boundary": "worker/services/notifications.ts#per-user preference and digest scoping",
+      "subsystem": "worker/",
+      "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage"
+    },
+    "surface": "worker/routes/notifications.ts#PUT /api/v1/notifications/preferences",
+    "boundary": "worker/services/notifications.ts#per-user preference and digest scoping",
+    "subsystem": "worker/",
+    "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "starting_paths": [
+      "worker/routes/notifications.ts",
+      "worker/services/notifications.ts",
+      "shared/schemas/planning.ts",
+      "worker/services/email.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "selected_companion_blocks": [
+      "HUNTING.md#Defensive vulnerability-finding method",
+      "HUNTING.md#Candidate gate",
+      "HUNTING.md#Local validation boundaries"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "MEMORY-SAFETY-AND-BINARY.md#Core discipline",
+        "reason": "No native or unsafe memory handling in this surface; the runtime is a TypeScript Worker or a React client."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p5-integrations",
+    "reviewed_paths": [
+      "worker/routes/notifications.ts",
+      "worker/services/notifications.ts",
+      "shared/schemas/planning.ts",
+      "worker/services/email.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/routes/notifications.ts"
+        ],
+        "invariant": "Notification reads and read-state changes are scoped to the recipient.",
+        "method": "source",
+        "result": "Confirmed: list, unread count, read-all, and single read all filter on user_id; single read also requires read_at IS NULL.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/routes/notifications.ts",
+          "worker/services/notifications.ts",
+          "shared/schemas/planning.ts"
+        ],
+        "invariant": "Preferences are per-user and limited to known categories and digest frequencies.",
+        "method": "source",
+        "result": "Confirmed: the schema validates categories and frequency, every upsert binds the caller id, and the update is audited.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p5-integrations",
+        "reviewed_paths": [
+          "worker/services/notifications.ts",
+          "worker/services/email.ts"
+        ],
+        "invariant": "Digest generation is per-user, idempotent per period, and provider-gated.",
+        "method": "source",
+        "result": "Confirmed: createDigest keys on user and period, email is sent only when emailDeliveryConfigured is true, and failures are recorded in the outbox instead of thrown.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "hardening_notes": [],
+    "_unit": "U27"
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fplanning.ts%23GET%20%2Fapi%2Fv1%2Fplanning%2Fworkload::worker%2Fservices%2Fplanning.ts%23resolvePlanningMember::worker%2Fservices%2Fplanning.ts::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "worker/routes/planning.ts#GET /api/v1/planning/workload",
+      "boundary": "worker/services/planning.ts#resolvePlanningMember",
+      "subsystem": "worker/services/planning.ts",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "worker/routes/planning.ts#GET /api/v1/planning/workload",
+    "boundary": "worker/services/planning.ts#resolvePlanningMember",
+    "subsystem": "worker/services/planning.ts",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "worker/services/planning.ts",
+      "worker/routes/planning.ts",
+      "worker/routes/tasks.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Tenant and object-isolation attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#Tool and action attack classes",
+        "reason": "Planning reads are not exposed as assistant tools."
+      },
+      {
+        "block": "PROTOCOLS-RPC-AND-MESSAGING.md#RPC identity and authorization attack classes",
+        "reason": "Plain HTTP reads with session identity, no RPC peer."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p3-workflow",
+    "reviewed_paths": [
+      "worker/services/planning.ts",
+      "worker/routes/planning.ts",
+      "worker/routes/tasks.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/services/planning.ts",
+          "worker/routes/planning.ts"
+        ],
+        "invariant": "Planning views are scoped to the requesting member unless the caller is an administrator, and supervisors are read-only.",
+        "method": "source",
+        "result": "Confirmed: resolvePlanningMember rejects cross-member reads, supervisors are rejected from write paths, and the calendar window is capped at 180 days.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/routes/tasks.ts",
+          "worker/services/planning.ts"
+        ],
+        "invariant": "Workload aggregation cannot be used to enumerate another member effort.",
+        "method": "source",
+        "result": "Confirmed: the member scope is applied before aggregation, and the dependency and workload queries join only in-scope tasks.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U18",
+    "hardening_notes": []
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Freports.ts%23GET%20%2Fapi%2Fv1%2Freports%2Fprogress.csv::worker%2Froutes%2Freports.ts%23team-only%20report%20scope::worker%2Froutes%2Freports.ts::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+    "canonical_refs": {
+      "surface": "worker/routes/reports.ts#GET /api/v1/reports/progress.csv",
+      "boundary": "worker/routes/reports.ts#team-only report scope",
+      "subsystem": "worker/routes/reports.ts",
+      "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage"
+    },
+    "surface": "worker/routes/reports.ts#GET /api/v1/reports/progress.csv",
+    "boundary": "worker/routes/reports.ts#team-only report scope",
+    "subsystem": "worker/routes/reports.ts",
+    "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "starting_paths": [
+      "worker/routes/reports.ts",
+      "worker/services/csv.ts",
+      "worker/services/pdf.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "selected_companion_blocks": [
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Export, backup, restore, and migration attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "ATTACK-CLASSES.md#Injection",
+        "reason": "CSV formula injection is covered by the unit; SQL uses bound parameters."
+      },
+      {
+        "block": "CLIENT-SIDE.md#Cross-site information leak classes",
+        "reason": "Export is downloaded as an attachment with explicit disposition."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p4-data",
+    "reviewed_paths": [
+      "worker/routes/reports.ts",
+      "worker/services/csv.ts",
+      "worker/services/pdf.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/reports.ts"
+        ],
+        "invariant": "Team-wide reports require super_admin or project_supervisor, and member reports are self-scoped.",
+        "method": "source",
+        "result": "Confirmed: requireRole on the team reports and a user_id filter on member reports; every export writes a report_exports row and an audit row.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/services/csv.ts",
+          "worker/services/pdf.ts"
+        ],
+        "invariant": "CSV and PDF exports cannot inject formulas or leak unsupported characters.",
+        "method": "source",
+        "result": "Confirmed: CSV prefixes formula-leading cells and quotes fields; the PDF normalizes typography to ASCII and replaces remaining non-ASCII with a question mark.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U11",
+    "hardening_notes": []
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Freviews.ts%23POST%20%2Fapi%2Fv1%2Freviews%2F%3Aid::worker%2Froutes%2Freviews.ts%23SELF_APPROVAL_FORBIDDEN::worker%2Froutes%2Freviews.ts::ATTACK-CLASSES.md%23Business%20logic",
+    "canonical_refs": {
+      "surface": "worker/routes/reviews.ts#POST /api/v1/reviews/:id",
+      "boundary": "worker/routes/reviews.ts#SELF_APPROVAL_FORBIDDEN",
+      "subsystem": "worker/routes/reviews.ts",
+      "attack_class": "ATTACK-CLASSES.md#Business logic"
+    },
+    "surface": "worker/routes/reviews.ts#POST /api/v1/reviews/:id",
+    "boundary": "worker/routes/reviews.ts#SELF_APPROVAL_FORBIDDEN",
+    "subsystem": "worker/routes/reviews.ts",
+    "attack_class": "ATTACK-CLASSES.md#Business logic",
+    "starting_paths": [
+      "worker/routes/reviews.ts",
+      "worker/routes/tasks.ts",
+      "db/migrations/0007_integrity_guards.sql",
+      "shared/schemas/planning.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Business logic",
+    "selected_companion_blocks": [],
+    "excluded_blocks": [
+      {
+        "block": "DATA-ISOLATION-AND-LIFECYCLE.md#Export, backup, restore, and migration attack classes",
+        "reason": "Approval decisions are not copied into export or backup payloads."
+      },
+      {
+        "block": "CLIENT-SIDE.md#Cross-site information leak classes",
+        "reason": "Decision boundary is server-side state, not browser cache."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p3-workflow",
+    "reviewed_paths": [
+      "worker/routes/reviews.ts",
+      "db/migrations/0007_integrity_guards.sql",
+      "shared/schemas/planning.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/routes/reviews.ts"
+        ],
+        "invariant": "A submitter cannot approve their own submission.",
+        "method": "source",
+        "result": "Confirmed: the route returns SELF_APPROVAL_FORBIDDEN when submitted_by equals the reviewer, and enforces the assigned reviewer unless the caller is super_admin.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/routes/reviews.ts",
+          "db/migrations/0007_integrity_guards.sql"
+        ],
+        "invariant": "A submission receives at most one decision, including under concurrent reviewers.",
+        "method": "source",
+        "result": "Confirmed: the decision UPDATE is guarded by status=pending and reviews_submission_unique_idx rejects a second review row, aborting the whole D1 batch and rolling back the task or checkpoint update.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/routes/reviews.ts",
+          "shared/schemas/planning.ts"
+        ],
+        "invariant": "Rubric scores are validated against the selected rubric before a decision is recorded.",
+        "method": "source",
+        "result": "Confirmed: every criterion must be scored, unknown criteria are rejected, and weights are normalized into a stored total.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U08",
+    "hardening_notes": []
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fsearch.ts%23GET%20%2Fapi%2Fv1%2Fsearch::worker%2Fservices%2Fwiki-access.ts%23wikiVisibilityFilter::worker%2Fservices%2Fsearch.ts::ATTACK-CLASSES.md%23Feature%20abuse%20and%20data%20leakage",
+    "canonical_refs": {
+      "surface": "worker/routes/search.ts#GET /api/v1/search",
+      "boundary": "worker/services/wiki-access.ts#wikiVisibilityFilter",
+      "subsystem": "worker/services/search.ts",
+      "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage"
+    },
+    "surface": "worker/routes/search.ts#GET /api/v1/search",
+    "boundary": "worker/services/wiki-access.ts#wikiVisibilityFilter",
+    "subsystem": "worker/services/search.ts",
+    "attack_class": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "starting_paths": [
+      "worker/services/search.ts",
+      "worker/services/wiki-access.ts",
+      "worker/routes/workspace-modules.ts",
+      "worker/routes/users.ts",
+      "worker/routes/search.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Feature abuse and data leakage",
+    "selected_companion_blocks": [
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Derived-data and disclosure attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "CLIENT-SIDE.md#DOM and object-state attack classes",
+        "reason": "Search oracle is server-side filtering, not DOM state."
+      },
+      {
+        "block": "AI-AND-LLM.md#Context, retrieval, and memory attack classes",
+        "reason": "Assistant retrieval is a separate unit."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p4-data",
+    "reviewed_paths": [
+      "worker/services/search.ts",
+      "worker/services/wiki-access.ts",
+      "worker/routes/workspace-modules.ts",
+      "worker/routes/search.ts",
+      "worker/routes/users.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/services/search.ts",
+          "worker/services/wiki-access.ts",
+          "worker/routes/workspace-modules.ts"
+        ],
+        "invariant": "Search results respect wiki visibility and supervisor read-only scope.",
+        "method": "source",
+        "result": "Confirmed: wikiVisibilityFilter and the per-module predicates exclude supervisor-only and admin-only rows for ordinary members.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/services/search.ts",
+          "worker/routes/search.ts",
+          "worker/routes/users.ts"
+        ],
+        "invariant": "User input cannot change LIKE semantics or exceed the D1 pattern limit.",
+        "method": "source",
+        "result": "Confirmed: escapeLikePattern plus the keyword reduction to at most four terms of at most 48 escaped bytes; the former 51-100 character 500 is closed.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U10",
+    "hardening_notes": []
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Ftasks.ts%23POST%20%2Fapi%2Fv1%2Ftasks%2F%3Aid%2Fsubmissions::worker%2Froutes%2Ftasks.ts%23assignee%20and%20checkpoint%20owner%20checks::worker%2Froutes%2Ftasks.ts::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "worker/routes/tasks.ts#POST /api/v1/tasks/:id/submissions",
+      "boundary": "worker/routes/tasks.ts#assignee and checkpoint owner checks",
+      "subsystem": "worker/routes/tasks.ts",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "worker/routes/tasks.ts#POST /api/v1/tasks/:id/submissions",
+    "boundary": "worker/routes/tasks.ts#assignee and checkpoint owner checks",
+    "subsystem": "worker/routes/tasks.ts",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "worker/routes/tasks.ts",
+      "worker/routes/reviews.ts",
+      "db/migrations/0007_integrity_guards.sql",
+      "worker/routes/attachments.ts",
+      "shared/schemas/tasks.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Tenant and object-isolation attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "CLIENT-SIDE.md#DOM and object-state attack classes",
+        "reason": "Submission gate is enforced server-side only."
+      },
+      {
+        "block": "AI-AND-LLM.md#Output and disclosure attack classes",
+        "reason": "No model output participates in the gate."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "p3-workflow",
+    "reviewed_paths": [
+      "worker/routes/tasks.ts",
+      "worker/routes/reviews.ts",
+      "db/migrations/0007_integrity_guards.sql",
+      "shared/schemas/tasks.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/routes/tasks.ts",
+          "worker/routes/reviews.ts",
+          "db/migrations/0007_integrity_guards.sql"
+        ],
+        "invariant": "Only the assignee or an administrator can submit evidence, and submission is blocked while linked tasks are incomplete.",
+        "method": "source",
+        "result": "Confirmed: assignee and checkpoint-owner checks, TASKS_INCOMPLETE for unfinished linked tasks, and a schema requiring 1-20 evidence items.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/routes/tasks.ts",
+          "shared/schemas/tasks.ts"
+        ],
+        "invariant": "Approved status cannot be written through the generic status route.",
+        "method": "source",
+        "result": "Confirmed: updateTaskStatusSchema excludes approved, so only reviews.ts can set it.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/routes/tasks.ts"
+        ],
+        "invariant": "The 24-hour daily effort cap holds under concurrent submissions.",
+        "method": "source",
+        "result": "Candidate: tasks.ts:428-432 sums the day and rejects only when the sum exceeds 24, then tasks.ts:436 inserts unconditionally; two parallel requests that each pass the check can exceed the cap.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "workflow.worklog-daily-cap-race"
+    ],
+    "unresolved": [],
+    "_unit": "U07",
+    "hardening_notes": [
+      "Archiving a task (tasks.ts:463-474) does not withdraw a pending submission for that task, so an administrator can archive work that is still awaiting review."
+    ]
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fusers.ts%23PATCH%20%2Fapi%2Fv1%2Fusers%2F%3Aid%2Froles::worker%2Froutes%2Fusers.ts%23requirePermission%28%27workspace.admin%27%29::worker%2Froutes%2Fusers.ts::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "worker/routes/users.ts#PATCH /api/v1/users/:id/roles",
+      "boundary": "worker/routes/users.ts#requirePermission('workspace.admin')",
+      "subsystem": "worker/routes/users.ts",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "worker/routes/users.ts#PATCH /api/v1/users/:id/roles",
+    "boundary": "worker/routes/users.ts#requirePermission('workspace.admin')",
+    "subsystem": "worker/routes/users.ts",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "worker/routes/users.ts",
+      "worker/middleware/auth.ts",
+      "db/migrations/0001_foundation.sql",
+      "db/migrations/0007_integrity_guards.sql",
+      "worker/services/wiki-access.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Tenant and object-isolation attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "CLIENT-SIDE.md#Cross-origin messaging and network attack classes",
+        "reason": "Role mutation is server-side authorization, not browser messaging."
+      },
+      {
+        "block": "PROTOCOLS-RPC-AND-MESSAGING.md#Broker and queue isolation attack classes",
+        "reason": "No broker or queue in the role path."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p2-authz",
+    "reviewed_paths": [
+      "worker/routes/users.ts",
+      "db/migrations/0007_integrity_guards.sql",
+      "worker/middleware/auth.ts",
+      "db/migrations/0001_foundation.sql",
+      "worker/services/wiki-access.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p2-authz",
+        "reviewed_paths": [
+          "worker/routes/users.ts",
+          "db/migrations/0007_integrity_guards.sql"
+        ],
+        "invariant": "Only a workspace administrator can change roles, and the last administrator cannot be demoted.",
+        "method": "source",
+        "result": "Confirmed: requirePermission(workspace.admin) on the route, two last-admin triggers in 0007, and an audit row per change.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p2-authz",
+        "reviewed_paths": [
+          "worker/middleware/auth.ts",
+          "db/migrations/0001_foundation.sql",
+          "worker/services/wiki-access.ts"
+        ],
+        "invariant": "Role and permission changes take effect on the next request instead of relying on stale session state.",
+        "method": "source",
+        "result": "Confirmed: requireAuth re-reads user_roles, roles, and role_permissions for every request, and wiki-access derives admin and supervisor status from that fresh snapshot.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U05",
+    "hardening_notes": []
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fusers.ts%23POST%20%2Fapi%2Fv1%2Fusers%2F%3Aid%2Freassign-work::db%2Fmigrations%2F0007_integrity_guards.sql%23last-admin%20and%20submission%20guards::worker%2Froutes%2Fusers.ts::ATTACK-CLASSES.md%23Business%20logic",
+    "canonical_refs": {
+      "surface": "worker/routes/users.ts#POST /api/v1/users/:id/reassign-work",
+      "boundary": "db/migrations/0007_integrity_guards.sql#last-admin and submission guards",
+      "subsystem": "worker/routes/users.ts",
+      "attack_class": "ATTACK-CLASSES.md#Business logic"
+    },
+    "surface": "worker/routes/users.ts#POST /api/v1/users/:id/reassign-work",
+    "boundary": "db/migrations/0007_integrity_guards.sql#last-admin and submission guards",
+    "subsystem": "worker/routes/users.ts",
+    "attack_class": "ATTACK-CLASSES.md#Business logic",
+    "starting_paths": [
+      "worker/routes/users.ts",
+      "db/migrations/0007_integrity_guards.sql",
+      "worker/routes/reviews.ts",
+      "worker/routes/tasks.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Business logic",
+    "selected_companion_blocks": [
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Core discipline",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Universal moves",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Validation rules",
+      "DATA-ISOLATION-AND-LIFECYCLE.md#Deletion, revocation, and lifecycle attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "AI-AND-LLM.md#MCP and sub-agent trust classes",
+        "reason": "No delegated agent holds role or work authority."
+      },
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Configuration and secret lifecycle attack classes",
+        "reason": "Work reassignment does not depend on a deployment secret."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p2-authz",
+    "reviewed_paths": [
+      "worker/routes/users.ts",
+      "db/migrations/0007_integrity_guards.sql",
+      "worker/routes/tasks.ts",
+      "worker/routes/reviews.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p2-authz",
+        "reviewed_paths": [
+          "worker/routes/users.ts",
+          "db/migrations/0007_integrity_guards.sql"
+        ],
+        "invariant": "Work reassignment requires workspace.admin, an active target, and the task.work permission.",
+        "method": "source",
+        "result": "Confirmed: requirePermission(workspace.admin), a target query restricted to status=active and the task.work permission, a 100-item cap, plus audit and notification rows.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p2-authz",
+        "reviewed_paths": [
+          "worker/routes/users.ts",
+          "worker/routes/tasks.ts",
+          "worker/routes/reviews.ts"
+        ],
+        "invariant": "A task and its linked checkpoint are reassigned together so ownership stays consistent.",
+        "method": "source",
+        "result": "Candidate: users.ts:156-178 counts and updates tasks and checkpoints independently; no checkpoint_tasks pairing check or paired update exists, so a request can move a task without its checkpoint.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U06",
+    "hardening_notes": [
+      "A candidate (workflow.reassign-pairing-gap) was raised and then rejected in Phase 5: POST /users/:id/reassign-work requires workspace.admin, which db/migrations/0001_foundation.sql:413 grants only to role_admin alongside task.manage and review.admin, so moving a task without its checkpoint crosses no trust boundary. The rejected record is retained in findings.json so a future run does not restate it without changed evidence.",
+      "The endpoint reports reassignedTasks and reassignedCheckpoints separately (users.ts:197) and the member dialog states that approved records remain approved (members-page.tsx:897), so independent selection is the documented contract of an administrative transfer."
+    ]
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fworkspace-modules.ts%23GET%20%2Fapi%2Fv1%2Fwiki%2F%3Aslug::worker%2Fservices%2Fwiki-access.ts%23canViewWiki%20and%20canEditWiki::worker%2F::ATTACK-CLASSES.md%23Access%20control",
+    "canonical_refs": {
+      "surface": "worker/routes/workspace-modules.ts#GET /api/v1/wiki/:slug",
+      "boundary": "worker/services/wiki-access.ts#canViewWiki and canEditWiki",
+      "subsystem": "worker/",
+      "attack_class": "ATTACK-CLASSES.md#Access control"
+    },
+    "surface": "worker/routes/workspace-modules.ts#GET /api/v1/wiki/:slug",
+    "boundary": "worker/services/wiki-access.ts#canViewWiki and canEditWiki",
+    "subsystem": "worker/",
+    "attack_class": "ATTACK-CLASSES.md#Access control",
+    "starting_paths": [
+      "worker/routes/workspace-modules.ts",
+      "worker/services/wiki-access.ts",
+      "shared/schemas/workspace.ts",
+      "worker/services/search.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Access control",
+    "selected_companion_blocks": [
+      "HUNTING.md#Defensive vulnerability-finding method",
+      "HUNTING.md#Candidate gate",
+      "HUNTING.md#Local validation boundaries"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "MEMORY-SAFETY-AND-BINARY.md#Core discipline",
+        "reason": "No native or unsafe memory handling in this surface; the runtime is a TypeScript Worker."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "candidate",
+    "agent_id": "p4-data",
+    "reviewed_paths": [
+      "worker/routes/workspace-modules.ts",
+      "worker/services/wiki-access.ts",
+      "shared/schemas/workspace.ts",
+      "worker/services/search.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/workspace-modules.ts",
+          "worker/services/wiki-access.ts"
+        ],
+        "invariant": "Wiki visibility is enforced on list, detail, and version creation.",
+        "method": "source",
+        "result": "Confirmed: the list applies wikiVisibilityFilter, the detail route calls canViewWiki and returns 404 on denial, and version creation requires canViewWiki then canEditWiki.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/services/wiki-access.ts",
+          "shared/schemas/workspace.ts"
+        ],
+        "invariant": "Only members can create or edit member-visible pages; supervisors are read-only and admins may edit any page.",
+        "method": "source",
+        "result": "Confirmed: canCreateWiki and canEditWiki reject supervisors, allow members only for visibility=members, and allow workspace admins for every visibility.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/workspace-modules.ts"
+        ],
+        "invariant": "Concurrent wiki edits cannot overwrite each other silently.",
+        "method": "source",
+        "result": "Confirmed: the next version is current_version+1 and the unique version index turns a concurrent save into a 409 VERSION_CONFLICT.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p4-data",
+        "reviewed_paths": [
+          "worker/routes/workspace-modules.ts",
+          "worker/services/search.ts"
+        ],
+        "invariant": "Wiki search input cannot alter LIKE semantics or exceed the D1 pattern limit.",
+        "method": "source",
+        "result": "Candidate: workspace-modules.ts:39 binds %${search}% with no escapeLikePattern and no length cap, unlike services/search.ts, so a long or wildcard-heavy query can raise the D1 LIKE pattern error and return 500.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [
+      "search.wiki-like-pattern-unbounded"
+    ],
+    "unresolved": [],
+    "hardening_notes": [
+      "GET /decisions is registered twice (workspace-modules.ts:88 and :91); the second handler is unreachable dead code.",
+      "Issue resolution (workspace-modules.ts:95) writes no audit row, unlike the other administrative transitions.",
+      "The raw LIKE bind at workspace-modules.ts:39 is not unique: tasks.ts:167 and admin.ts:74 bind raw patterns too, and hardware.ts:59 escapes without a byte budget, so the same class should be reviewed as one sweep rather than per route."
+    ],
+    "_unit": "U21"
+  },
+  {
+    "coverage_id": "worker%2Froutes%2Fworkspace-modules.ts%23PATCH%20%2Fapi%2Fv1%2Fbugs%2F%3Aid%2Fresolve::worker%2Froutes%2Fworkspace-modules.ts%23assignee%20or%20super_admin%20guard::worker%2F::ATTACK-CLASSES.md%23Business%20logic",
+    "canonical_refs": {
+      "surface": "worker/routes/workspace-modules.ts#PATCH /api/v1/bugs/:id/resolve",
+      "boundary": "worker/routes/workspace-modules.ts#assignee or super_admin guard",
+      "subsystem": "worker/",
+      "attack_class": "ATTACK-CLASSES.md#Business logic"
+    },
+    "surface": "worker/routes/workspace-modules.ts#PATCH /api/v1/bugs/:id/resolve",
+    "boundary": "worker/routes/workspace-modules.ts#assignee or super_admin guard",
+    "subsystem": "worker/",
+    "attack_class": "ATTACK-CLASSES.md#Business logic",
+    "starting_paths": [
+      "worker/routes/workspace-modules.ts",
+      "shared/schemas/workspace.ts",
+      "worker/routes/notifications.ts"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Business logic",
+    "selected_companion_blocks": [
+      "HUNTING.md#Defensive vulnerability-finding method",
+      "HUNTING.md#Candidate gate",
+      "HUNTING.md#Local validation boundaries"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "MEMORY-SAFETY-AND-BINARY.md#Core discipline",
+        "reason": "No native or unsafe memory handling in this surface; the runtime is a TypeScript Worker."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p3-workflow",
+    "reviewed_paths": [
+      "worker/routes/workspace-modules.ts",
+      "shared/schemas/workspace.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/routes/workspace-modules.ts"
+        ],
+        "invariant": "Only the issue assignee or a super admin can resolve an issue, and a resolution note is required.",
+        "method": "source",
+        "result": "Confirmed: the route rejects supervisors, requires resolutionNotes, and compares assignee_id with the caller unless the caller has super_admin.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/routes/workspace-modules.ts"
+        ],
+        "invariant": "Supervisors can create feedback but cannot post messages, worklogs, issues, or decisions.",
+        "method": "source",
+        "result": "Confirmed: isSupervisor guards the write paths, while supervisor feedback uses requireRole(project_supervisor) and notifies the target member.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p3-workflow",
+        "reviewed_paths": [
+          "worker/routes/workspace-modules.ts",
+          "shared/schemas/workspace.ts"
+        ],
+        "invariant": "Decision records are admin-only to create and readable by the team.",
+        "method": "source",
+        "result": "Confirmed: POST /decisions requires task.manage and decisionSchema validates the payload; GET is available to every authenticated member.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "hardening_notes": [
+      "Supervisor feedback accepts any memberId without confirming that the target belongs to the workspace."
+    ],
+    "_unit": "U26"
+  },
+  {
+    "coverage_id": "wrangler.jsonc%23vars%20and%20bindings::worker%2Ftypes.ts%23Env%20binding%20allowlist::wrangler.jsonc::ATTACK-CLASSES.md%23Cryptography%20and%20secrets",
+    "canonical_refs": {
+      "surface": "wrangler.jsonc#vars and bindings",
+      "boundary": "worker/types.ts#Env binding allowlist",
+      "subsystem": "wrangler.jsonc",
+      "attack_class": "ATTACK-CLASSES.md#Cryptography and secrets"
+    },
+    "surface": "wrangler.jsonc#vars and bindings",
+    "boundary": "worker/types.ts#Env binding allowlist",
+    "subsystem": "wrangler.jsonc",
+    "attack_class": "ATTACK-CLASSES.md#Cryptography and secrets",
+    "starting_paths": [
+      "wrangler.jsonc",
+      "scripts/sanitize-build.mjs",
+      "worker/services/mfa-secret.ts",
+      "worker/types.ts",
+      ".dev.vars.example"
+    ],
+    "ordinary_attack_class_block": "ATTACK-CLASSES.md#Cryptography and secrets",
+    "selected_companion_blocks": [
+      "CLOUD-AND-DEPLOYMENT.md#Core discipline",
+      "CLOUD-AND-DEPLOYMENT.md#Universal moves",
+      "CLOUD-AND-DEPLOYMENT.md#Validation rules",
+      "CLOUD-AND-DEPLOYMENT.md#Configuration and secret lifecycle attack classes"
+    ],
+    "excluded_blocks": [
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Container and orchestration attack classes",
+        "reason": "Workers runtime has no container or orchestrator in this deployment."
+      },
+      {
+        "block": "CLOUD-AND-DEPLOYMENT.md#Workload identity and IAM attack classes",
+        "reason": "No cloud IAM role or workload identity is assumed by the Worker source."
+      }
+    ],
+    "prior_status": "none",
+    "attempts": [],
+    "wave": 1,
+    "status": "covered",
+    "agent_id": "p6-client",
+    "reviewed_paths": [
+      "wrangler.jsonc",
+      "scripts/sanitize-build.mjs",
+      ".dev.vars.example",
+      "worker/services/mfa-secret.ts",
+      "worker/types.ts"
+    ],
+    "local_checks": [
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "wrangler.jsonc",
+          "scripts/sanitize-build.mjs",
+          ".dev.vars.example"
+        ],
+        "invariant": "Production configuration contains no secrets and no development secret reaches the build output.",
+        "method": "source",
+        "result": "Confirmed: vars hold only APP_ENV and APP_ORIGIN, secrets are Worker secrets, .dev.vars is gitignored, and the build script deletes the preview copy and fails if any secret value appears in a bundle.",
+        "artifact": null
+      },
+      {
+        "agent_id": "p6-client",
+        "reviewed_paths": [
+          "worker/services/mfa-secret.ts",
+          "worker/types.ts"
+        ],
+        "invariant": "A missing or malformed MFA key fails closed instead of downgrading storage.",
+        "method": "source",
+        "result": "Confirmed: production requires a base64 32-byte key and returns 503 MFA_UNAVAILABLE otherwise; only development accepts the dev: prefix.",
+        "artifact": null
+      }
+    ],
+    "result_fingerprints": [],
+    "unresolved": [],
+    "_unit": "U20",
+    "hardening_notes": []
+  }
+]
