@@ -73,11 +73,17 @@ taskRoutes.get('/checkpoints/:id', async (context) => {
   if (!checkpoint) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Checkpoint not found' } }, 404);
 
   const [tasks, submissions] = await Promise.all([
-    context.env.DB.prepare(`SELECT t.id, t.title, t.priority, t.status, t.assignee_id AS assigneeId, u.display_name AS assigneeName
+    context.env.DB.prepare(`SELECT t.id, t.title, t.priority, t.status, t.assignee_id AS assigneeId, u.display_name AS assigneeName,
+        t.start_date AS startDate, t.due_date AS dueDate, t.updated_at AS updatedAt, ct.mandatory,
+        (SELECT COUNT(*) FROM task_checklist_items c WHERE c.task_id=t.id) AS checklistTotal,
+        (SELECT COUNT(*) FROM task_checklist_items c WHERE c.task_id=t.id AND c.completed_at IS NOT NULL) AS checklistDone,
+        (SELECT COALESCE(SUM(w.hours), 0) FROM task_worklogs w WHERE w.task_id=t.id) AS loggedHours,
+        (SELECT COUNT(*) FROM task_worklogs w WHERE w.task_id=t.id) AS worklogCount
       FROM checkpoint_tasks ct
       JOIN tasks t ON t.id=ct.task_id
       LEFT JOIN users u ON u.id=t.assignee_id
-      WHERE ct.checkpoint_id=? AND t.archived_at IS NULL`).bind(context.req.param('id')).all(),
+      WHERE ct.checkpoint_id=? AND t.archived_at IS NULL
+      ORDER BY ct.mandatory DESC, t.sort_order, t.title`).bind(context.req.param('id')).all(),
     context.env.DB.prepare(`SELECT s.*, u.display_name AS submitted_by_name
       FROM submissions s JOIN users u ON u.id=s.submitted_by
       WHERE s.checkpoint_id=? ORDER BY s.version DESC`).bind(context.req.param('id')).all(),

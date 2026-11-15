@@ -3,6 +3,8 @@ import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Clock,
   FileText,
   GripVertical,
@@ -16,6 +18,7 @@ import {
   Send,
   Shield,
   SlidersHorizontal,
+  Users,
   X,
 } from 'lucide-react';
 import { useState } from 'react';
@@ -49,11 +52,33 @@ interface Checkpoint {
   status: string;
   approvedAt?: number;
   milestoneTitle: string;
-  domainName: string;
+  domainName: string | null;
   ownerId: string;
   ownerName: string;
   taskCount: number;
   approvedTaskCount: number;
+}
+
+interface CheckpointTaskRow {
+  id: string;
+  title: string;
+  priority: string;
+  status: string;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  startDate: string | null;
+  dueDate: string | null;
+  updatedAt: number;
+  mandatory: number;
+  checklistTotal: number;
+  checklistDone: number;
+  loggedHours: number;
+  worklogCount: number;
+}
+
+interface CheckpointDetail {
+  checkpoint: { id: string; title: string; status: string; ownerName: string | null };
+  tasks: CheckpointTaskRow[];
 }
 
 interface MemberOption {
@@ -97,6 +122,9 @@ export function TasksPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showApprovedColumn, setShowApprovedColumn] = useState(false);
+  const [showTeam, setShowTeam] = useState(false);
+  const [expandedCheckpointId, setExpandedCheckpointId] = useState<string | null>(null);
+  const mineOnly = mode === 'member' && !showTeam;
 
   // Drag and drop state
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
@@ -147,10 +175,10 @@ export function TasksPage() {
   };
 
   const tasksQuery = useQuery({
-    queryKey: ['tasks', mode, statusFilter, search],
+    queryKey: ['tasks', mode, statusFilter, search, mineOnly],
     queryFn: () =>
       api<Task[]>(
-        `/tasks?limit=100&mine=${mode === 'member'}${statusFilter ? `&status=${statusFilter}` : ''}${
+        `/tasks?limit=100&mine=${mineOnly}${statusFilter ? `&status=${statusFilter}` : ''}${
           search ? `&search=${encodeURIComponent(search)}` : ''
         }`
       ),
@@ -161,6 +189,26 @@ export function TasksPage() {
     queryFn: () => api<Checkpoint[]>('/tasks/checkpoints'),
     enabled: viewMode === 'checkpoints',
   });
+
+  const checkpointDetailQuery = useQuery({
+    queryKey: ['checkpoint-detail', expandedCheckpointId],
+    queryFn: () => api<CheckpointDetail>(`/tasks/checkpoints/${expandedCheckpointId}`),
+    enabled: Boolean(expandedCheckpointId) && viewMode === 'checkpoints',
+  });
+
+  const checkpointRows = checkpointDetailQuery.data?.tasks ?? [];
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const checkpointOwnership = new Map<string, { name: string; total: number; approved: number; active: number; notStarted: number; hours: number }>();
+  for (const row of checkpointRows) {
+    const key = row.assigneeId ?? 'unassigned';
+    const entry = checkpointOwnership.get(key) ?? { name: row.assigneeName ?? 'Unassigned', total: 0, approved: 0, active: 0, notStarted: 0, hours: 0 };
+    entry.total += 1;
+    entry.hours += row.loggedHours ?? 0;
+    if (row.status === 'approved') entry.approved += 1;
+    else if (row.status === 'backlog') entry.notStarted += 1;
+    else entry.active += 1;
+    checkpointOwnership.set(key, entry);
+  }
 
   const membersQuery = useQuery({
     queryKey: ['members-short'],
@@ -173,10 +221,10 @@ export function TasksPage() {
       api(`/tasks/${taskId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
     onMutate: async ({ taskId, status }) => {
       await queryClient.cancelQueries({ queryKey: ['tasks'] });
-      const previousTasks = queryClient.getQueryData<Task[]>(['tasks', mode, statusFilter, search]);
+      const previousTasks = queryClient.getQueryData<Task[]>(['tasks', mode, statusFilter, search, mineOnly]);
       if (previousTasks) {
         queryClient.setQueryData<Task[]>(
-          ['tasks', mode, statusFilter, search],
+          ['tasks', mode, statusFilter, search, mineOnly],
           previousTasks.map((t) => (t.id === taskId ? { ...t, status } : t))
         );
       }
@@ -185,7 +233,7 @@ export function TasksPage() {
     },
     onError: (err, _variables, context) => {
       if (context?.previousTasks) {
-        queryClient.setQueryData(['tasks', mode, statusFilter, search], context.previousTasks);
+        queryClient.setQueryData(['tasks', mode, statusFilter, search, mineOnly], context.previousTasks);
       }
       setActionError(err instanceof ApiError ? err.message : 'Status transition failed');
     },
@@ -211,10 +259,10 @@ export function TasksPage() {
       }),
     onMutate: async ({ taskId }) => {
       await queryClient.cancelQueries({ queryKey: ['tasks'] });
-      const previousTasks = queryClient.getQueryData<Task[]>(['tasks', mode, statusFilter, search]);
+      const previousTasks = queryClient.getQueryData<Task[]>(['tasks', mode, statusFilter, search, mineOnly]);
       if (previousTasks) {
         queryClient.setQueryData<Task[]>(
-          ['tasks', mode, statusFilter, search],
+          ['tasks', mode, statusFilter, search, mineOnly],
           previousTasks.map((t) => (t.id === taskId ? { ...t, status: 'ready_for_review' } : t))
         );
       }
@@ -231,7 +279,7 @@ export function TasksPage() {
     },
     onError: (err, _variables, context) => {
       if (context?.previousTasks) {
-        queryClient.setQueryData(['tasks', mode, statusFilter, search], context.previousTasks);
+        queryClient.setQueryData(['tasks', mode, statusFilter, search, mineOnly], context.previousTasks);
       }
       setSubmissionError(err instanceof ApiError ? err.message : 'Submission failed');
     },
@@ -484,6 +532,17 @@ export function TasksPage() {
               title="Toggle approved tasks column"
             >
               <Check size={14} /> Approved ({approvedTasks.length})
+            </Button>
+          )}
+
+          {mode === 'member' && (
+            <Button
+              variant={showTeam ? 'secondary' : 'ghost'}
+              size="sm"
+              onClick={() => setShowTeam(!showTeam)}
+              title={showTeam ? 'Showing every memberÃ¢â‚¬â„¢s tasks' : 'Show every memberÃ¢â‚¬â„¢s tasks, not only your own'}
+            >
+              <Users size={14} /> Team
             </Button>
           )}
         </div>
@@ -805,7 +864,7 @@ export function TasksPage() {
                         </Link>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', borderTop: '1px solid var(--color-border-subtle)', paddingTop: '6px' }}>
                           <span style={{ fontSize: '0.75rem', color: 'var(--color-silver-mid)' }}>{task.assigneeName}</span>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--color-status-verified)' }}>✓ Verified</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--color-status-verified)' }}>Ã¢Å“â€œ Verified</span>
                         </div>
                       </div>
                     ))}
@@ -984,6 +1043,7 @@ export function TasksPage() {
           {checkpointsQuery.isLoading ? (
             <PageSkeleton />
           ) : checkpointsQuery.data?.length ? (
+            <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '16px' }}>
               {checkpointsQuery.data.map((cp) => {
                 const allTasksApproved = cp.taskCount > 0 && cp.approvedTaskCount === cp.taskCount;
@@ -998,7 +1058,7 @@ export function TasksPage() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                       <div>
                         <span style={{ fontSize: '0.72rem', color: 'var(--color-cyan-sentinel)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                          {cp.domainName}
+                          {cp.domainName ?? 'Weekly checkpoint'}
                         </span>
                         <h3 style={{ margin: '3px 0 0', fontSize: '0.98rem', lineHeight: 1.3 }}>{cp.title}</h3>
                         <small style={{ color: 'var(--color-pewter)', fontSize: '0.72rem' }}>{cp.milestoneTitle}</small>
@@ -1036,10 +1096,20 @@ export function TasksPage() {
                     </div>
 
                     {/* Footer: Owner + Submit Action */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto', paddingTop: '10px', borderTop: '1px solid var(--color-border-subtle)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto', paddingTop: '10px', borderTop: '1px solid var(--color-border-subtle)', gap: '8px', flexWrap: 'wrap' }}>
                       <span style={{ fontSize: '0.74rem', color: 'var(--color-pewter)' }}>
                         Owner: <strong style={{ color: 'var(--color-silver-light)' }}>{cp.ownerName}</strong>
                       </span>
+
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setExpandedCheckpointId(expandedCheckpointId === cp.id ? null : cp.id)}
+                        title="Show who owns each task, its status, checklist progress, and logged hours"
+                      >
+                        {expandedCheckpointId === cp.id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                        Who did what
+                      </Button>
 
                       {canSubmitCheckpoint && !isAlreadySubmitted && (
                         allTasksApproved ? (
@@ -1054,7 +1124,7 @@ export function TasksPage() {
                               setCheckpointEvidenceKind('url');
                               setCheckpointError(null);
                             }}
-                            title="All tasks approved — ready to submit checkpoint"
+                            title="All tasks approved Ã¢â‚¬â€ ready to submit checkpoint"
                           >
                             <Send size={13} /> Submit Checkpoint
                           </Button>
@@ -1087,6 +1157,99 @@ export function TasksPage() {
                 );
               })}
             </div>
+
+            {expandedCheckpointId && (
+              <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {checkpointDetailQuery.isLoading ? (
+                  <PageSkeleton />
+                ) : checkpointRows.length > 0 ? (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                      <h3 style={{ margin: 0, fontSize: '0.95rem' }}>
+                        {checkpointDetailQuery.data?.checkpoint.title ?? 'Checkpoint'} â€” task ownership
+                      </h3>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.74rem', color: 'var(--color-pewter)' }}>
+                          {checkpointRows.filter((row) => row.status === 'approved').length}/{checkpointRows.length} approved
+                        </span>
+                        <Button variant="ghost" size="sm" onClick={() => setExpandedCheckpointId(null)} aria-label="Hide task ownership">
+                          <X size={14} />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      {[...checkpointOwnership.values()].map((entry) => (
+                        <span
+                          key={entry.name}
+                          style={{
+                            fontSize: '0.72rem',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            background: 'var(--color-surface-subtle)',
+                            border: '1px solid var(--color-border-subtle)',
+                            color: 'var(--color-silver-mid)',
+                          }}
+                        >
+                          <strong>{entry.name}</strong> Â· {entry.approved}/{entry.total} approved
+                          {entry.active > 0 ? ` Â· ${entry.active} in progress` : ''}
+                          {entry.notStarted > 0 ? ` Â· ${entry.notStarted} not started` : ''}
+                          {entry.hours > 0 ? ` Â· ${entry.hours}h logged` : ''}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.76rem' }}>
+                        <thead>
+                          <tr style={{ textAlign: 'left', color: 'var(--color-pewter)' }}>
+                            <th style={{ padding: '6px 8px' }}>Task</th>
+                            <th style={{ padding: '6px 8px' }}>Assignee</th>
+                            <th style={{ padding: '6px 8px' }}>Status</th>
+                            <th style={{ padding: '6px 8px' }}>Checklist</th>
+                            <th style={{ padding: '6px 8px' }}>Hours</th>
+                            <th style={{ padding: '6px 8px' }}>Due</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {checkpointRows.map((row) => {
+                            const overdue = row.dueDate !== null && row.status !== 'approved' && row.dueDate < todayIso;
+                            return (
+                              <tr key={row.id} style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+                                <td style={{ padding: '6px 8px' }}>
+                                  <Link to={`/tasks/${row.id}`} style={{ color: 'var(--color-silver-light)' }}>
+                                    {row.title}
+                                  </Link>
+                                </td>
+                                <td style={{ padding: '6px 8px', color: row.assigneeName ? 'var(--color-silver-mid)' : 'var(--color-status-blocked)' }}>
+                                  {row.assigneeName ?? 'Unassigned'}
+                                </td>
+                                <td style={{ padding: '6px 8px' }}>
+                                  <StatusBadge status={row.status} />
+                                </td>
+                                <td style={{ padding: '6px 8px', color: 'var(--color-pewter)' }}>
+                                  {row.checklistTotal > 0 ? `${row.checklistDone}/${row.checklistTotal}` : 'â€”'}
+                                </td>
+                                <td style={{ padding: '6px 8px', color: 'var(--color-pewter)' }}>{row.loggedHours > 0 ? `${row.loggedHours}h` : 'â€”'}</td>
+                                <td style={{ padding: '6px 8px', color: overdue ? 'var(--color-status-blocked)' : 'var(--color-pewter)' }}>
+                                  {row.dueDate ?? 'â€”'}
+                                  {overdue ? ' Â· overdue' : ''}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                ) : (
+                  <span style={{ fontSize: '0.78rem', color: 'var(--color-pewter)' }}>
+                    {checkpointDetailQuery.isError ? 'Could not load the checkpoint detail.' : 'This checkpoint has no linked tasks.'}
+                  </span>
+                )}
+              </Panel>
+            )}
+            </>
           ) : (
             <EmptyState title="No checkpoints loaded" body="Checkpoints will appear once roadmaps are initialized." />
           )}
@@ -1233,7 +1396,7 @@ export function TasksPage() {
                   disabled={submitCheckpoint.isPending || checkpointSummary.trim().length < 20 || !checkpointEvidence.trim()}
                 >
                   {submitCheckpoint.isPending
-                    ? <><Loader2 size={14} className="animate-spin" /> Submitting…</>
+                    ? <><Loader2 size={14} className="animate-spin" /> SubmittingÃ¢â‚¬Â¦</>
                     : <><Send size={14} /> Confirm Checkpoint Submission</>}
                 </Button>
               </div>

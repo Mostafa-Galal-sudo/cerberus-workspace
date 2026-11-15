@@ -1,7 +1,7 @@
 # CERBERUS — Team Roles, Checkpoint Ownership, and Work Breakdown
 
 **Date:** 2026-11-12
-**Status:** Proposed, **not applied**. No account, role, checkpoint, or task has been changed in production.
+**Status:** The four ownership moves and the deputy grant were applied in production on 2026-11-15 (see Appendix D). The 30-checkpoint roadmap this document assigns was **superseded on the same day** by the six-week plan in `docs/WEEKLY_PLAN_APPLIED_2026-11-15.md`; sections 4 and 6 describe the retired structure and are kept as history.
 **Sources:**
 - `F:\UserData\Desktop\proj\cerberus-workspace` at `fe25862` (clean, synced).
 - Production D1 read-only inspection (users, roles, domains, checkpoints, tasks, `checkpoint_tasks`).
