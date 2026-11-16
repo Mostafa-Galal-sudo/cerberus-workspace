@@ -112,7 +112,7 @@ test('renders safe GFM markdown and previews wiki content', async ({ page }) => 
 
 test('opens the command palette with Ctrl+K and returns server search results', async ({ page }) => {
   await page.goto('/');
-  await expect(page.getByRole('button', { name: 'Search Ctrl K' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Search the workspace' })).toBeVisible();
   await page.keyboard.press('Control+k');
 
   const dialog = page.getByRole('dialog', { name: 'Search the workspace' });
