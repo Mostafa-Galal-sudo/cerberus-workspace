@@ -44,8 +44,8 @@ interface Detail {
     inputs: string;
     required_tools: string;
     expected_outputs: string;
-    start_date: number | null;
-    due_date: number | null;
+    start_date: string | number | null;
+    due_date: string | number | null;
     estimate_hours: number;
   };
   checklist: Array<{ id: string; title: string; required: number; completed_at: number | null }>;
@@ -75,8 +75,25 @@ interface TaskComment {
   edited: boolean;
 }
 
-function toDateInput(epoch: number | null | undefined): string {
-  return epoch ? new Date(epoch * 1000).toISOString().slice(0, 10) : '';
+function toDateInput(value: number | string | null | undefined): string {
+  if (value == null || value === '') return '';
+
+  // Date-only values returned by the API
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const timestamp = typeof value === 'string' ? Number(value) : value;
+
+  const date = new Date(
+    Number.isFinite(timestamp)
+      ? (Math.abs(timestamp) < 1e12 ? timestamp * 1000 : timestamp)
+      : value
+  );
+
+  if (!Number.isFinite(date.getTime())) return '';
+
+  return date.toISOString().slice(0, 10);
 }
 
 export function TaskDetailPage() {
