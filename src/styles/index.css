@@ -3702,3 +3702,37 @@ pre,
 .checkpoint-overview-card {
   padding: 14px 16px;
 }
+
+
+/* ---------------------------------------------------------------------------
+   Task list groups - stable roadmap order, one section per discipline
+   --------------------------------------------------------------------------- */
+.task-list-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.task-list-group-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-graphite-muted);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  font-family: "JetBrains Mono", monospace;
+}
+
+.task-list-group-title span {
+  min-width: 22px;
+  padding: 1px 7px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 10px;
+  background: var(--color-surface-graphite);
+  color: var(--color-pewter);
+  font-size: 0.66rem;
+  text-align: center;
+}

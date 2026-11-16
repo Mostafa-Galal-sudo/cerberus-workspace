@@ -22,7 +22,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../app/auth-context';
 import { Button, EmptyState, PageSkeleton, Panel, StatusBadge } from '../../components/ui';
@@ -479,8 +479,21 @@ export function TasksPage() {
     handleMoveTask(task, targetColumnId);
   };
 
-  const allTasks = tasksQuery.data ?? [];
+  const allTasks = useMemo(() => tasksQuery.data ?? [], [tasksQuery.data]);
   const approvedTasks = allTasks.filter((t) => t.status === 'approved');
+
+  // The API returns tasks in stable roadmap order (discipline, then plan order).
+  // Group consecutive rows by discipline so the list reads as ordered sections.
+  const listGroups = useMemo(() => {
+    const groups: Array<{ domain: string; tasks: typeof allTasks }> = [];
+    for (const task of allTasks) {
+      const domain = task.domainName ?? 'Cross-functional';
+      const last = groups[groups.length - 1];
+      if (last && last.domain === domain) last.tasks.push(task);
+      else groups.push({ domain, tasks: [task] });
+    }
+    return groups;
+  }, [allTasks]);
 
   return (
     <div className="page tasks-page">
@@ -1019,31 +1032,41 @@ export function TasksPage() {
         <>
           {tasksQuery.isLoading ? (
             <PageSkeleton />
-          ) : tasksQuery.data?.length ? (
-            <div className="task-table" role="table">
-              <div className="task-table-head" role="row">
-                <span>Work item</span>
-                <span>Owner / discipline</span>
-                <span>Verification gates</span>
-                <span>Status</span>
-              </div>
-              {tasksQuery.data.map((task) => (
-                <Link to={`/tasks/${task.id}`} className="task-table-row" role="row" key={task.id}>
-                  <span>
-                    <i className={`priority-line priority-${task.priority}`} />
-                    <strong>{task.title}</strong>
-                    <small>{task.description}</small>
-                  </span>
-                  <span>
-                    <strong>{task.assigneeName ?? 'Unassigned'}</strong>
-                    <small>{task.domainName ?? 'Cross-functional'}</small>
-                  </span>
-                  <span>
-                    <strong>{task.checklistDone}/{task.checklistTotal}</strong>
-                    <small>criteria satisfied</small>
-                  </span>
-                  <StatusBadge status={task.status} />
-                </Link>
+          ) : listGroups.length ? (
+            <div className="task-list-groups">
+              {listGroups.map((group) => (
+                <section key={group.domain} className="task-list-group">
+                  <h2 className="task-list-group-title">
+                    {group.domain}
+                    <span>{group.tasks.length}</span>
+                  </h2>
+                  <div className="task-table" role="table">
+                    <div className="task-table-head" role="row">
+                      <span>Work item</span>
+                      <span>Owner / discipline</span>
+                      <span>Verification gates</span>
+                      <span>Status</span>
+                    </div>
+                    {group.tasks.map((task) => (
+                      <Link to={`/tasks/${task.id}`} className="task-table-row" role="row" key={task.id}>
+                        <span>
+                          <i className={`priority-line priority-${task.priority}`} />
+                          <strong>{task.title}</strong>
+                          <small>{task.description}</small>
+                        </span>
+                        <span>
+                          <strong>{task.assigneeName ?? 'Unassigned'}</strong>
+                          <small>{task.domainName ?? 'Cross-functional'}</small>
+                        </span>
+                        <span>
+                          <strong>{task.checklistDone}/{task.checklistTotal}</strong>
+                          <small>criteria satisfied</small>
+                        </span>
+                        <StatusBadge status={task.status} />
+                      </Link>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           ) : (

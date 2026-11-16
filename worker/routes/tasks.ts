@@ -235,7 +235,7 @@ taskRoutes.get('/', async (context) => {
       (SELECT COUNT(*) FROM task_checklist_items c WHERE c.task_id=t.id AND c.completed_at IS NOT NULL) AS checklistDone,
       (SELECT COUNT(*) FROM task_dependencies td WHERE td.task_id=t.id) AS dependencyCount
     FROM tasks t LEFT JOIN users u ON u.id=t.assignee_id LEFT JOIN engineering_domains d ON d.id=t.domain_id
-    WHERE ${where} ORDER BY CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.updated_at DESC
+    WHERE ${where} ORDER BY d.sort_order, t.sort_order, t.created_at, t.id
     LIMIT ? OFFSET ?`).bind(...bindings, limit, (page - 1) * limit).all();
 
   const total = await context.env.DB.prepare(`SELECT COUNT(*) AS count FROM tasks t WHERE ${where}`).bind(...bindings).first<{ count: number }>();
