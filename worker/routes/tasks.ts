@@ -63,7 +63,16 @@ taskRoutes.get('/checkpoints', async (context) => {
 });
 
 taskRoutes.get('/checkpoints/:id', async (context) => {
-  const checkpoint = await context.env.DB.prepare(`SELECT c.*, m.title AS milestone_title, d.name AS domain_name, u.display_name AS owner_name
+  const checkpoint = await context.env.DB.prepare(`SELECT c.id, c.milestone_id AS milestoneId, c.owner_id AS ownerId,
+      c.title, c.description, c.required_deliverable AS requiredDeliverable, c.acceptance_criteria AS acceptanceCriteria,
+      c.evidence_requirements AS evidenceRequirements, c.validation_procedure AS validationProcedure,
+      c.status, c.approved_at AS approvedAt, c.updated_at AS updatedAt,
+      m.title AS milestoneTitle,
+      d.name AS domainName, u.display_name AS ownerName,
+      (SELECT COUNT(*) FROM checkpoint_tasks ct JOIN tasks t ON t.id=ct.task_id WHERE ct.checkpoint_id=c.id AND t.archived_at IS NULL) AS taskCount,
+      (SELECT COUNT(*) FROM checkpoint_tasks ct JOIN tasks t ON t.id=ct.task_id WHERE ct.checkpoint_id=c.id AND t.status='approved' AND t.archived_at IS NULL) AS approvedTaskCount,
+      (SELECT MIN(t2.start_date) FROM checkpoint_tasks ct2 JOIN tasks t2 ON t2.id=ct2.task_id WHERE ct2.checkpoint_id=c.id AND t2.archived_at IS NULL) AS windowStart,
+      (SELECT MAX(t3.due_date) FROM checkpoint_tasks ct3 JOIN tasks t3 ON t3.id=ct3.task_id WHERE ct3.checkpoint_id=c.id AND t3.archived_at IS NULL) AS windowDue
     FROM checkpoints c
     JOIN milestones m ON m.id=c.milestone_id
     LEFT JOIN engineering_domains d ON d.id=m.domain_id
@@ -72,24 +81,69 @@ taskRoutes.get('/checkpoints/:id', async (context) => {
 
   if (!checkpoint) return context.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Checkpoint not found' } }, 404);
 
-  const [tasks, submissions] = await Promise.all([
-    context.env.DB.prepare(`SELECT t.id, t.title, t.priority, t.status, t.assignee_id AS assigneeId, u.display_name AS assigneeName,
-        t.start_date AS startDate, t.due_date AS dueDate, t.updated_at AS updatedAt, ct.mandatory,
+  const [tasks, submissions, reviews, dependencies] = await Promise.all([
+    context.env.DB.prepare(`SELECT t.id, t.title, t.description, t.priority, t.status, t.assignee_id AS assigneeId,
+        u.display_name AS assigneeName, t.start_date AS startDate, t.due_date AS dueDate, t.updated_at AS updatedAt, ct.mandatory,
+        t.prerequisites, t.inputs, t.required_tools AS requiredTools, t.implementation_steps AS implementationSteps,
+        t.expected_outputs AS expectedOutputs, t.deliverables, t.acceptance_criteria AS acceptanceCriteria,
+        t.evidence_requirements AS evidenceRequirements, t.validation_procedure AS validationProcedure,
         (SELECT COUNT(*) FROM task_checklist_items c WHERE c.task_id=t.id) AS checklistTotal,
         (SELECT COUNT(*) FROM task_checklist_items c WHERE c.task_id=t.id AND c.completed_at IS NOT NULL) AS checklistDone,
         (SELECT COALESCE(SUM(w.hours), 0) FROM task_worklogs w WHERE w.task_id=t.id) AS loggedHours,
-        (SELECT COUNT(*) FROM task_worklogs w WHERE w.task_id=t.id) AS worklogCount
+        (SELECT COUNT(*) FROM task_worklogs w WHERE w.task_id=t.id) AS worklogCount,
+        (SELECT MAX(w2.created_at) FROM task_worklogs w2 WHERE w2.task_id=t.id) AS lastWorklogAt
       FROM checkpoint_tasks ct
       JOIN tasks t ON t.id=ct.task_id
       LEFT JOIN users u ON u.id=t.assignee_id
       WHERE ct.checkpoint_id=? AND t.archived_at IS NULL
       ORDER BY ct.mandatory DESC, t.sort_order, t.title`).bind(context.req.param('id')).all(),
-    context.env.DB.prepare(`SELECT s.*, u.display_name AS submitted_by_name
+    // Submission summaries and review state are team-visible; evidence rows stay
+    // restricted to the submitter and reviewers (unchanged access control).
+    context.env.DB.prepare(`SELECT s.id, s.summary, s.status, s.version, s.submitted_at AS submittedAt, s.updated_at AS updatedAt,
+        u.display_name AS submittedByName,
+        (SELECT COUNT(*) FROM submission_evidence e WHERE e.submission_id=s.id) AS evidenceCount
       FROM submissions s JOIN users u ON u.id=s.submitted_by
       WHERE s.checkpoint_id=? ORDER BY s.version DESC`).bind(context.req.param('id')).all(),
+    context.env.DB.prepare(`SELECT r.submission_id AS submissionId, r.result, r.feedback, r.created_at AS createdAt,
+        ru.display_name AS reviewerName
+      FROM reviews r
+      JOIN submissions s ON s.id=r.submission_id
+      LEFT JOIN users ru ON ru.id=r.reviewer_id
+      WHERE s.checkpoint_id=? ORDER BY r.created_at DESC`).bind(context.req.param('id')).all(),
+    context.env.DB.prepare(`SELECT td.task_id AS taskId, d.id, d.title, d.status, d.assignee_id AS assigneeId,
+        du.display_name AS assigneeName
+      FROM checkpoint_tasks ct
+      JOIN task_dependencies td ON td.task_id=ct.task_id
+      JOIN tasks d ON d.id=td.depends_on_task_id AND d.archived_at IS NULL
+      LEFT JOIN users du ON du.id=d.assignee_id
+      WHERE ct.checkpoint_id=?`).bind(context.req.param('id')).all(),
   ]);
 
-  return context.json({ ok: true, data: { checkpoint, tasks: tasks.results, submissions: submissions.results } });
+  const reviewsBySubmission = new Map<string, Array<{ result: string; feedback: string; createdAt: number; reviewerName: string | null }>>();
+  for (const review of reviews.results as Array<{ submissionId: string; result: string; feedback: string; createdAt: number; reviewerName: string | null }>) {
+    const list = reviewsBySubmission.get(review.submissionId) ?? [];
+    list.push({ result: review.result, feedback: review.feedback, createdAt: review.createdAt, reviewerName: review.reviewerName });
+    reviewsBySubmission.set(review.submissionId, list);
+  }
+
+  const dependenciesByTask = new Map<string, Array<{ id: string; title: string; status: string; assigneeId: string | null; assigneeName: string | null }>>();
+  for (const dependency of dependencies.results as Array<{ taskId: string; id: string; title: string; status: string; assigneeId: string | null; assigneeName: string | null }>) {
+    const list = dependenciesByTask.get(dependency.taskId) ?? [];
+    list.push({ id: dependency.id, title: dependency.title, status: dependency.status, assigneeId: dependency.assigneeId, assigneeName: dependency.assigneeName });
+    dependenciesByTask.set(dependency.taskId, list);
+  }
+
+  const submissionRows = (submissions.results as Array<Record<string, unknown>>).map((row) => ({
+    ...row,
+    reviews: reviewsBySubmission.get(row.id as string) ?? [],
+  }));
+
+  const taskRows = (tasks.results as Array<Record<string, unknown>>).map((row) => ({
+    ...row,
+    dependencies: dependenciesByTask.get(row.id as string) ?? [],
+  }));
+
+  return context.json({ ok: true, data: { checkpoint, tasks: taskRows, submissions: submissionRows } });
 });
 
 taskRoutes.post('/checkpoints/:id/submissions', async (context) => {

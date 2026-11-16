@@ -12,6 +12,7 @@ import { ResetPasswordPage } from '../features/auth/reset-password-page';
 import { DashboardPage } from '../features/dashboard/dashboard-page';
 import { ReviewQueuePage } from '../features/tasks/review-queue-page';
 import { TaskDetailPage } from '../features/tasks/task-detail-page';
+import { CheckpointDetailPage } from '../features/tasks/checkpoint-detail-page';
 import { TasksPage } from '../features/tasks/tasks-page';
 import { PlanningPage } from '../features/planning/planning-page';
 import { MembersPage } from '../features/members/members-page';
@@ -49,6 +50,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <DashboardPage /> },
       { path: 'tasks', element: <TasksPage /> },
+      { path: 'tasks/checkpoints/:checkpointId', element: <CheckpointDetailPage /> },
       { path: 'tasks/:taskId', element: <TaskDetailPage /> },
       { path: 'planning', element: <PlanningPage /> },
       {

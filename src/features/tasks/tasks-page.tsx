@@ -9,6 +9,7 @@ import {
   FileText,
   GripVertical,
   Kanban as KanbanIcon,
+  Layers,
   List,
   Loader2,
   Milestone,
@@ -22,7 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { useState } from 'react';
-import { Link, useOutletContext } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../app/auth-context';
 import { Button, EmptyState, PageSkeleton, Panel, StatusBadge } from '../../components/ui';
 import { api, ApiError } from '../../lib/api';
@@ -114,9 +115,23 @@ function getTaskColumnId(status: string): KanbanColumnId | 'approved' {
 export function TasksPage() {
   const { user } = useAuth();
   const { mode } = useOutletContext<{ mode: string }>();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [viewMode, setViewMode] = useState<'list' | 'kanban' | 'checkpoints'>('kanban');
+  const initialView = searchParams.get('view');
+  const [viewMode, setViewMode] = useState<'list' | 'kanban' | 'checkpoints'>(
+    initialView === 'checkpoints' ? 'checkpoints' : 'kanban',
+  );
+  const changeViewMode = (next: 'list' | 'kanban' | 'checkpoints') => {
+    setViewMode(next);
+    if (initialView) {
+      const params = new URLSearchParams(searchParams);
+      if (next === 'checkpoints') params.set('view', 'checkpoints');
+      else params.delete('view');
+      setSearchParams(params, { replace: true });
+    }
+  };
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -540,7 +555,7 @@ export function TasksPage() {
               variant={showTeam ? 'secondary' : 'ghost'}
               size="sm"
               onClick={() => setShowTeam(!showTeam)}
-              title={showTeam ? 'Showing every memberÃ¢â‚¬â„¢s tasks' : 'Show every memberÃ¢â‚¬â„¢s tasks, not only your own'}
+              title={showTeam ? 'Showing every memberÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢s tasks' : 'Show every memberÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢s tasks, not only your own'}
             >
               <Users size={14} /> Team
             </Button>
@@ -551,7 +566,7 @@ export function TasksPage() {
           <Button
             variant={viewMode === 'kanban' ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => setViewMode('kanban')}
+            onClick={() => changeViewMode('kanban')}
             title="Interactive Kanban Board"
           >
             <KanbanIcon size={15} /> Board
@@ -559,7 +574,7 @@ export function TasksPage() {
           <Button
             variant={viewMode === 'list' ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => setViewMode('list')}
+            onClick={() => changeViewMode('list')}
             title="Detailed List"
           >
             <List size={15} /> List
@@ -567,7 +582,7 @@ export function TasksPage() {
           <Button
             variant={viewMode === 'checkpoints' ? 'secondary' : 'ghost'}
             size="sm"
-            onClick={() => setViewMode('checkpoints')}
+            onClick={() => changeViewMode('checkpoints')}
             title="Checkpoints & Milestones"
           >
             <Milestone size={15} /> Milestones
@@ -864,7 +879,7 @@ export function TasksPage() {
                         </Link>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', borderTop: '1px solid var(--color-border-subtle)', paddingTop: '6px' }}>
                           <span style={{ fontSize: '0.75rem', color: 'var(--color-silver-mid)' }}>{task.assigneeName}</span>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--color-status-verified)' }}>Ã¢Å“â€œ Verified</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--color-status-verified)' }}>ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Verified</span>
                         </div>
                       </div>
                     ))}
@@ -1111,6 +1126,15 @@ export function TasksPage() {
                         Who did what
                       </Button>
 
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => navigate(`/tasks/checkpoints/${cp.id}`)}
+                        title="Open the full checkpoint page: requirements, per-member progress, task details, and submissions"
+                      >
+                        <Layers size={13} /> View details
+                      </Button>
+
                       {canSubmitCheckpoint && !isAlreadySubmitted && (
                         allTasksApproved ? (
                           <Button
@@ -1124,7 +1148,7 @@ export function TasksPage() {
                               setCheckpointEvidenceKind('url');
                               setCheckpointError(null);
                             }}
-                            title="All tasks approved Ã¢â‚¬â€ ready to submit checkpoint"
+                            title="All tasks approved ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ready to submit checkpoint"
                           >
                             <Send size={13} /> Submit Checkpoint
                           </Button>
@@ -1166,7 +1190,7 @@ export function TasksPage() {
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                       <h3 style={{ margin: 0, fontSize: '0.95rem' }}>
-                        {checkpointDetailQuery.data?.checkpoint.title ?? 'Checkpoint'} â€” task ownership
+                        {checkpointDetailQuery.data?.checkpoint.title ?? 'Checkpoint'} ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â task ownership
                       </h3>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <span style={{ fontSize: '0.74rem', color: 'var(--color-pewter)' }}>
@@ -1191,10 +1215,10 @@ export function TasksPage() {
                             color: 'var(--color-silver-mid)',
                           }}
                         >
-                          <strong>{entry.name}</strong> Â· {entry.approved}/{entry.total} approved
-                          {entry.active > 0 ? ` Â· ${entry.active} in progress` : ''}
-                          {entry.notStarted > 0 ? ` Â· ${entry.notStarted} not started` : ''}
-                          {entry.hours > 0 ? ` Â· ${entry.hours}h logged` : ''}
+                          <strong>{entry.name}</strong> Ãƒâ€šÃ‚Â· {entry.approved}/{entry.total} approved
+                          {entry.active > 0 ? ` Ãƒâ€šÃ‚Â· ${entry.active} in progress` : ''}
+                          {entry.notStarted > 0 ? ` Ãƒâ€šÃ‚Â· ${entry.notStarted} not started` : ''}
+                          {entry.hours > 0 ? ` Ãƒâ€šÃ‚Â· ${entry.hours}h logged` : ''}
                         </span>
                       ))}
                     </div>
@@ -1228,12 +1252,12 @@ export function TasksPage() {
                                   <StatusBadge status={row.status} />
                                 </td>
                                 <td style={{ padding: '6px 8px', color: 'var(--color-pewter)' }}>
-                                  {row.checklistTotal > 0 ? `${row.checklistDone}/${row.checklistTotal}` : 'â€”'}
+                                  {row.checklistTotal > 0 ? `${row.checklistDone}/${row.checklistTotal}` : 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}
                                 </td>
-                                <td style={{ padding: '6px 8px', color: 'var(--color-pewter)' }}>{row.loggedHours > 0 ? `${row.loggedHours}h` : 'â€”'}</td>
+                                <td style={{ padding: '6px 8px', color: 'var(--color-pewter)' }}>{row.loggedHours > 0 ? `${row.loggedHours}h` : 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}</td>
                                 <td style={{ padding: '6px 8px', color: overdue ? 'var(--color-status-blocked)' : 'var(--color-pewter)' }}>
-                                  {row.dueDate ?? 'â€”'}
-                                  {overdue ? ' Â· overdue' : ''}
+                                  {row.dueDate ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}
+                                  {overdue ? ' Ãƒâ€šÃ‚Â· overdue' : ''}
                                 </td>
                               </tr>
                             );
@@ -1396,7 +1420,7 @@ export function TasksPage() {
                   disabled={submitCheckpoint.isPending || checkpointSummary.trim().length < 20 || !checkpointEvidence.trim()}
                 >
                   {submitCheckpoint.isPending
-                    ? <><Loader2 size={14} className="animate-spin" /> SubmittingÃ¢â‚¬Â¦</>
+                    ? <><Loader2 size={14} className="animate-spin" /> SubmittingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦</>
                     : <><Send size={14} /> Confirm Checkpoint Submission</>}
                 </Button>
               </div>
