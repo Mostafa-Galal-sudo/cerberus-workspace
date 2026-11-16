@@ -6,6 +6,7 @@ import {
   Bot,
   CalendarDays,
   CheckSquare2,
+  ChevronDown,
   ClipboardCheck,
   Cpu,
   FileCheck,
@@ -17,6 +18,7 @@ import {
   Megaphone,
   Menu,
   MessageSquare,
+  MoreHorizontal,
   Scale,
   Search,
   Server,
@@ -41,6 +43,7 @@ export function AppShell() {
   const { user, session, logout, refresh } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [staying, setStaying] = useState(false);
   const [mode, setMode] = useState<'member' | 'admin' | 'supervisor'>(() =>
@@ -87,19 +90,22 @@ export function AppShell() {
 
   if (!user) return null;
 
-  const links = [
+  const primaryLinks = [
     { to: '/', label: 'Overview', icon: LayoutDashboard },
     { to: '/tasks', label: mode === 'admin' ? 'Task register' : 'Discipline tasks', icon: CheckSquare2 },
-    { to: '/planning', label: 'Planning & capacity', icon: CalendarDays },
+    { to: '/planning', label: 'Planning', icon: CalendarDays },
   ];
 
   if (mode === 'admin') {
-    links.push({ to: '/reviews', label: 'Review queue', icon: ClipboardCheck });
+    primaryLinks.push({ to: '/reviews', label: 'Review queue', icon: ClipboardCheck });
   }
 
-  links.push(
-    { to: '/members', label: mode === 'supervisor' ? 'Member progress' : 'Engineering roster', icon: mode === 'supervisor' ? Activity : Users },
+  primaryLinks.push(
+    { to: '/members', label: mode === 'supervisor' ? 'Member progress' : 'Roster', icon: mode === 'supervisor' ? Activity : Users },
     { to: '/chat', label: 'Team stream', icon: MessageSquare },
+  );
+
+  const moreLinks = [
     { to: '/announcements', label: 'Bulletins', icon: Megaphone },
     { to: '/wiki', label: 'Documentation wiki', icon: BookOpen },
     { to: '/issues', label: 'Defects & Blockers', icon: AlertOctagon },
@@ -109,11 +115,11 @@ export function AppShell() {
     { to: '/worklogs', label: 'Daily worklogs', icon: FileCheck },
     { to: '/integrations/github', label: 'GitHub CI', icon: GitBranch },
     { to: '/assistant', label: 'Sentinel AI', icon: Bot },
-    { to: '/reports', label: 'PDF Reports', icon: FileText }
-  );
+    { to: '/reports', label: 'PDF Reports', icon: FileText },
+  ];
 
   if (mode === 'admin') {
-    links.push({ to: '/admin', label: 'Command center', icon: Server });
+    moreLinks.push({ to: '/admin', label: 'Command center', icon: Server });
   }
 
   const switchMode = () => {
@@ -140,20 +146,35 @@ export function AppShell() {
         </div>
       </header>
 
-      {/* Sidebar Navigation */}
-      <aside className={open ? 'sidebar is-open' : 'sidebar'}>
-        <CerberusLogo size="md" />
-
-        <div className="mode-chip">
-          <ShieldCheck size={16} />
-          <span>{mode === 'admin' ? 'Admin control' : mode === 'supervisor' ? 'Supervisor view' : 'My workspace'}</span>
+      {/* Sidebar Navigation — icon rail that expands on hover and pushes content */}
+      <aside className={open ? 'sidebar is-open' : 'sidebar'} data-more-open={moreOpen || undefined}>
+        <div className="sidebar-brand">
+          <CerberusLogo size="md" />
         </div>
 
-        <nav aria-label="Primary" style={{ maxHeight: 'calc(100vh - 280px)', overflowY: 'auto' }}>
-          {links.map(({ to, label, icon: Icon }) => (
-            <NavLink key={`${mode}-${to}`} to={to} end={to === '/'} onClick={() => setOpen(false)}>
-              <Icon size={17} />
-              <span>{label}</span>
+        <div className="mode-chip" title={mode === 'admin' ? 'Admin control' : mode === 'supervisor' ? 'Supervisor view' : 'My workspace'}>
+          <ShieldCheck size={16} />
+          <span className="nav-label">{mode === 'admin' ? 'Admin control' : mode === 'supervisor' ? 'Supervisor view' : 'My workspace'}</span>
+        </div>
+
+        <nav aria-label="Primary" className="sidebar-nav">
+          {primaryLinks.map(({ to, label, icon: Icon }) => (
+            <NavLink key={`${mode}-${to}`} to={to} end={to === '/'} onClick={() => setOpen(false)} aria-label={label}>
+              <Icon size={17} className="nav-icon" />
+              <span className="nav-label">{label}</span>
+            </NavLink>
+          ))}
+
+          <button type="button" className="nav-more-toggle" onClick={() => setMoreOpen(!moreOpen)} aria-expanded={moreOpen}>
+            <MoreHorizontal size={17} className="nav-icon" />
+            <span className="nav-label">More</span>
+            <ChevronDown size={14} className="nav-caret" style={{ transform: moreOpen ? 'rotate(180deg)' : undefined }} />
+          </button>
+
+          {moreOpen && moreLinks.map(({ to, label, icon: Icon }) => (
+            <NavLink key={`${mode}-${to}`} to={to} onClick={() => setOpen(false)} className="nav-sub" aria-label={label}>
+              <Icon size={16} className="nav-icon" />
+              <span className="nav-label">{label}</span>
             </NavLink>
           ))}
         </nav>
@@ -161,50 +182,50 @@ export function AppShell() {
         <div className="sidebar-spacer" />
 
         {user.roles.includes('super_admin') && (
-          <Button variant="secondary" className="mode-switch" onClick={switchMode}>
-            <Users size={16} />
-            {mode === 'admin' ? 'Open my workspace' : 'Open admin control'}
+          <Button variant="secondary" className="mode-switch" onClick={switchMode} aria-label={mode === 'admin' ? 'Open my workspace' : 'Open admin control'}>
+            <Users size={16} className="nav-icon" />
+            <span className="nav-label">{mode === 'admin' ? 'Open my workspace' : 'Open admin control'}</span>
           </Button>
         )}
 
         <CerberusSentinelStatus />
 
-        <div style={{ marginTop: '10px' }}>
-          <button type="button" className="utility-link utility-search" onClick={() => setPaletteOpen(true)}>
-            <Search size={16} />
-            <span>Search</span>
-            <kbd>Ctrl K</kbd>
+        <div className="sidebar-utility">
+          <button type="button" className="utility-link utility-search" onClick={() => setPaletteOpen(true)} aria-label="Search the workspace">
+            <Search size={16} className="nav-icon" />
+            <span className="nav-label">Search</span>
+            <kbd className="nav-label">Ctrl K</kbd>
           </button>
-          <NavLink className="utility-link" to="/notifications">
-            <Bell size={16} />
-            <span>Alerts</span>
+          <NavLink className="utility-link" to="/notifications" aria-label={`Alerts${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}>
+            <Bell size={16} className="nav-icon" />
+            <span className="nav-label">Alerts</span>
             {unreadCount > 0 && (
               <span className="nav-badge" aria-label={`${unreadCount} unread notifications`}>
                 {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
           </NavLink>
-          <NavLink className="utility-link" to="/account/security">
-            <ShieldCheck size={16} />
-            <span>Security</span>
+          <NavLink className="utility-link" to="/account/security" aria-label="Security">
+            <ShieldCheck size={16} className="nav-icon" />
+            <span className="nav-label">Security</span>
           </NavLink>
           {mode === 'admin' && (
-            <NavLink className="utility-link" to="/settings">
-              <Settings size={16} />
-              <span>Settings</span>
+            <NavLink className="utility-link" to="/settings" aria-label="Settings">
+              <Settings size={16} className="nav-icon" />
+              <span className="nav-label">Settings</span>
             </NavLink>
           )}
         </div>
 
-        <button className="profile-block" onClick={() => void logout()} title="Sign out">
+        <button className="profile-block" onClick={() => void logout()} title={`Sign out — ${user.displayName}`} aria-label={`Sign out (${user.displayName})`}>
           <span className="avatar">
             {user.displayName.split(' ').map((part) => part[0]).slice(0, 2).join('')}
           </span>
-          <span>
+          <span className="nav-label profile-text">
             <strong>{user.displayName}</strong>
             <small>{user.specialization ?? 'Workspace member'}</small>
           </span>
-          <LogOut size={16} />
+          <LogOut size={16} className="nav-icon profile-exit" />
         </button>
       </aside>
 

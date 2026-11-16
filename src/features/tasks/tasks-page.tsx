@@ -555,7 +555,7 @@ export function TasksPage() {
               variant={showTeam ? 'secondary' : 'ghost'}
               size="sm"
               onClick={() => setShowTeam(!showTeam)}
-              title={showTeam ? 'Showing every memberÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢s tasks' : 'Show every memberÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢s tasks, not only your own'}
+              title={showTeam ? "Showing every member's tasks" : "Show every member's tasks, not only your own"}
             >
               <Users size={14} /> Team
             </Button>
@@ -879,7 +879,7 @@ export function TasksPage() {
                         </Link>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', borderTop: '1px solid var(--color-border-subtle)', paddingTop: '6px' }}>
                           <span style={{ fontSize: '0.75rem', color: 'var(--color-silver-mid)' }}>{task.assigneeName}</span>
-                          <span style={{ fontSize: '0.7rem', color: 'var(--color-status-verified)' }}>ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ Verified</span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--color-status-verified)' }}>Verified</span>
                         </div>
                       </div>
                     ))}
@@ -1068,114 +1068,102 @@ export function TasksPage() {
                 const progressPct = cp.taskCount > 0 ? Math.round((cp.approvedTaskCount / cp.taskCount) * 100) : 0;
 
                 return (
-                  <Panel key={cp.id} className="checkpoint-overview-card" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {/* Card Header */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        <span style={{ fontSize: '0.72rem', color: 'var(--color-cyan-sentinel)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
-                          {cp.domainName ?? 'Weekly checkpoint'}
-                        </span>
-                        <h3 style={{ margin: '3px 0 0', fontSize: '0.98rem', lineHeight: 1.3 }}>{cp.title}</h3>
-                        <small style={{ color: 'var(--color-pewter)', fontSize: '0.72rem' }}>{cp.milestoneTitle}</small>
-                      </div>
+                  <Panel key={cp.id} className="checkpoint-overview-card" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {/* Card Header: kicker + title + status */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                      <span className="checkpoint-kicker">{cp.domainName ?? 'Weekly checkpoint'}</span>
                       <StatusBadge status={cp.status} />
                     </div>
+                    <h3 className="checkpoint-title">{cp.title}</h3>
 
-                    <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--color-pewter)', lineHeight: 1.5 }}>{cp.description}</p>
+                    {/* One-line deliverable */}
+                    {cp.requiredDeliverable?.trim() ? (
+                      <p className="checkpoint-deliverable" title={cp.requiredDeliverable}>
+                        <FileText size={12} style={{ flex: 'none', marginTop: '3px' }} />
+                        <span className="checkpoint-deliverable-text">{cp.requiredDeliverable}</span>
+                      </p>
+                    ) : null}
 
-                    {/* Key Info */}
-                    <div style={{ background: 'var(--color-surface-subtle)', padding: '10px 12px', borderRadius: '4px', fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '5px', border: '1px solid var(--color-border-subtle)' }}>
-                      <div><strong style={{ color: 'var(--color-silver-mid)' }}>Deliverable:</strong> <span style={{ color: 'var(--color-pewter)' }}>{cp.requiredDeliverable}</span></div>
-                      <div><strong style={{ color: 'var(--color-silver-mid)' }}>Acceptance:</strong> <span style={{ color: 'var(--color-pewter)' }}>{cp.acceptanceCriteria}</span></div>
-                    </div>
-
-                    {/* Task Progress Bar */}
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px', fontSize: '0.74rem' }}>
-                        <span style={{ color: 'var(--color-silver-mid)' }}>Task Completion</span>
-                        <span style={{ color: allTasksApproved ? 'var(--color-status-verified)' : 'var(--color-silver-mid)', fontWeight: 600 }}>
-                          {cp.approvedTaskCount}/{cp.taskCount} approved ({progressPct}%)
-                        </span>
-                      </div>
-                      <div style={{ height: '5px', background: 'var(--color-surface-subtle)', borderRadius: '3px', overflow: 'hidden' }}>
+                    {/* Thin progress merged with the approval count */}
+                    <div className="checkpoint-progress-row">
+                      <div className="checkpoint-progress-track" role="progressbar" aria-valuenow={progressPct} aria-valuemin={0} aria-valuemax={100} aria-label="Approved task progress">
                         <div
-                          style={{
-                            height: '100%',
-                            width: `${progressPct}%`,
-                            background: allTasksApproved ? 'var(--color-status-verified)' : 'var(--color-cyan-sentinel)',
-                            borderRadius: '3px',
-                            transition: 'width 0.4s ease',
-                          }}
+                          className="checkpoint-progress-fill"
+                          style={{ width: `${progressPct}%`, background: allTasksApproved ? 'var(--color-status-verified)' : 'var(--color-silver-mid)' }}
                         />
                       </div>
+                      <span className="checkpoint-progress-count" style={{ color: allTasksApproved ? 'var(--color-status-verified)' : 'var(--color-pewter)' }}>
+                        {cp.approvedTaskCount}/{cp.taskCount}
+                      </span>
                     </div>
 
-                    {/* Footer: Owner + Submit Action */}
+                    {/* Footer: Owner + actions */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 'auto', paddingTop: '10px', borderTop: '1px solid var(--color-border-subtle)', gap: '8px', flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: '0.74rem', color: 'var(--color-pewter)' }}>
-                        Owner: <strong style={{ color: 'var(--color-silver-light)' }}>{cp.ownerName}</strong>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--color-graphite-muted)' }}>
+                        Owner: <strong style={{ color: 'var(--color-silver-mid)' }}>{cp.ownerName}</strong>
                       </span>
 
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setExpandedCheckpointId(expandedCheckpointId === cp.id ? null : cp.id)}
-                        title="Show who owns each task, its status, checklist progress, and logged hours"
-                      >
-                        {expandedCheckpointId === cp.id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                        Who did what
-                      </Button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setExpandedCheckpointId(expandedCheckpointId === cp.id ? null : cp.id)}
+                          title="Show who owns each task, its status, checklist progress, and logged hours"
+                        >
+                          {expandedCheckpointId === cp.id ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                          Who did what
+                        </Button>
 
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => navigate(`/tasks/checkpoints/${cp.id}`)}
-                        title="Open the full checkpoint page: requirements, per-member progress, task details, and submissions"
-                      >
-                        <Layers size={13} /> View details
-                      </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => navigate(`/tasks/checkpoints/${cp.id}`)}
+                          title="Open the full checkpoint page: requirements, per-member progress, task details, and submissions"
+                        >
+                          <Layers size={13} /> Details
+                        </Button>
 
-                      {canSubmitCheckpoint && !isAlreadySubmitted && (
-                        allTasksApproved ? (
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            onClick={() => {
-                              setSubmittingCheckpoint(cp);
-                              setCheckpointSummary('');
-                              setCheckpointEvidence('');
-                              setCheckpointEvidenceLabel('Verification evidence');
-                              setCheckpointEvidenceKind('url');
-                              setCheckpointError(null);
-                            }}
-                            title="All tasks approved ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ready to submit checkpoint"
-                          >
-                            <Send size={13} /> Submit Checkpoint
-                          </Button>
-                        ) : (
-                          <span
-                            style={{
-                              fontSize: '0.7rem',
-                              color: 'var(--color-pewter)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              fontStyle: 'italic',
-                            }}
-                            title={`${cp.taskCount - cp.approvedTaskCount} task(s) still pending approval`}
-                          >
-                            <AlertTriangle size={12} style={{ color: 'var(--color-status-blocked)' }} />
-                            {cp.taskCount - cp.approvedTaskCount} task{cp.taskCount - cp.approvedTaskCount !== 1 ? 's' : ''} pending
+                        {canSubmitCheckpoint && !isAlreadySubmitted && (
+                          allTasksApproved ? (
+                            <Button
+                              variant="primary"
+                              size="sm"
+                              onClick={() => {
+                                setSubmittingCheckpoint(cp);
+                                setCheckpointSummary('');
+                                setCheckpointEvidence('');
+                                setCheckpointEvidenceLabel('Verification evidence');
+                                setCheckpointEvidenceKind('url');
+                                setCheckpointError(null);
+                              }}
+                              title="All tasks approved — ready to submit checkpoint"
+                            >
+                              <Send size={13} /> Submit
+                            </Button>
+                          ) : (
+                            <span
+                              style={{
+                                fontSize: '0.68rem',
+                                color: 'var(--color-graphite-muted)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                              }}
+                              title={`${cp.taskCount - cp.approvedTaskCount} task(s) still pending approval`}
+                            >
+                              <AlertTriangle size={12} style={{ color: 'var(--color-status-blocked)' }} />
+                              {cp.taskCount - cp.approvedTaskCount} pending
+                            </span>
+                          )
+                        )}
+
+                        {isAlreadySubmitted && (
+                          <span style={{ fontSize: '0.7rem', color: 'var(--color-status-verified)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <CheckCircle2 size={13} />
+                            {cp.status === 'approved' ? 'Approved' : 'In review'}
                           </span>
-                        )
-                      )}
-
-                      {isAlreadySubmitted && (
-                        <span style={{ fontSize: '0.72rem', color: 'var(--color-status-verified)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <CheckCircle2 size={13} />
-                          {cp.status === 'approved' ? 'Approved' : 'In review'}
-                        </span>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </Panel>
                 );
@@ -1183,14 +1171,14 @@ export function TasksPage() {
             </div>
 
             {expandedCheckpointId && (
-              <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 18px' }}>
                 {checkpointDetailQuery.isLoading ? (
                   <PageSkeleton />
                 ) : checkpointRows.length > 0 ? (
                   <>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                       <h3 style={{ margin: 0, fontSize: '0.95rem' }}>
-                        {checkpointDetailQuery.data?.checkpoint.title ?? 'Checkpoint'} ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â task ownership
+                        {checkpointDetailQuery.data?.checkpoint.title ?? 'Checkpoint'} — task ownership
                       </h3>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         <span style={{ fontSize: '0.74rem', color: 'var(--color-pewter)' }}>
@@ -1215,10 +1203,10 @@ export function TasksPage() {
                             color: 'var(--color-silver-mid)',
                           }}
                         >
-                          <strong>{entry.name}</strong> Ãƒâ€šÃ‚Â· {entry.approved}/{entry.total} approved
-                          {entry.active > 0 ? ` Ãƒâ€šÃ‚Â· ${entry.active} in progress` : ''}
-                          {entry.notStarted > 0 ? ` Ãƒâ€šÃ‚Â· ${entry.notStarted} not started` : ''}
-                          {entry.hours > 0 ? ` Ãƒâ€šÃ‚Â· ${entry.hours}h logged` : ''}
+                          <strong>{entry.name}</strong> · {entry.approved}/{entry.total} approved
+                          {entry.active > 0 ? ` · ${entry.active} in progress` : ''}
+                          {entry.notStarted > 0 ? ` · ${entry.notStarted} not started` : ''}
+                          {entry.hours > 0 ? ` · ${entry.hours}h logged` : ''}
                         </span>
                       ))}
                     </div>
@@ -1252,12 +1240,12 @@ export function TasksPage() {
                                   <StatusBadge status={row.status} />
                                 </td>
                                 <td style={{ padding: '6px 8px', color: 'var(--color-pewter)' }}>
-                                  {row.checklistTotal > 0 ? `${row.checklistDone}/${row.checklistTotal}` : 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}
+                                  {row.checklistTotal > 0 ? `${row.checklistDone}/${row.checklistTotal}` : '—'}
                                 </td>
-                                <td style={{ padding: '6px 8px', color: 'var(--color-pewter)' }}>{row.loggedHours > 0 ? `${row.loggedHours}h` : 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}</td>
+                                <td style={{ padding: '6px 8px', color: 'var(--color-pewter)' }}>{row.loggedHours > 0 ? `${row.loggedHours}h` : '—'}</td>
                                 <td style={{ padding: '6px 8px', color: overdue ? 'var(--color-status-blocked)' : 'var(--color-pewter)' }}>
-                                  {row.dueDate ?? 'ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â'}
-                                  {overdue ? ' Ãƒâ€šÃ‚Â· overdue' : ''}
+                                  {row.dueDate ?? '—'}
+                                  {overdue ? ' · overdue' : ''}
                                 </td>
                               </tr>
                             );
@@ -1420,7 +1408,7 @@ export function TasksPage() {
                   disabled={submitCheckpoint.isPending || checkpointSummary.trim().length < 20 || !checkpointEvidence.trim()}
                 >
                   {submitCheckpoint.isPending
-                    ? <><Loader2 size={14} className="animate-spin" /> SubmittingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦</>
+                    ? <><Loader2 size={14} className="animate-spin" /> Submitting…</>
                     : <><Send size={14} /> Confirm Checkpoint Submission</>}
                 </Button>
               </div>

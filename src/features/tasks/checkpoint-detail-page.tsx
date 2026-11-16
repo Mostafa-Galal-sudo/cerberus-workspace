@@ -170,6 +170,24 @@ export function CheckpointDetailPage() {
 
   const tasks = useMemo<CheckpointTask[]>(() => detailQuery.data?.tasks ?? [], [detailQuery.data]);
 
+  // The plan data sometimes repeats the deliverable text as the acceptance
+  // criteria — collapse identical cards into one instead of showing copies.
+  const requirementCards = useMemo(() => {
+    if (!checkpoint) return [];
+    const deliverable = checkpoint.requiredDeliverable?.trim() ?? '';
+    const acceptance = checkpoint.acceptanceCriteria?.trim() ?? '';
+    const validation = checkpoint.validationProcedure?.trim() ?? '';
+    const cards: Array<{ label: string; value: string }> = [];
+    if (deliverable && deliverable === acceptance) {
+      cards.push({ label: 'Required deliverable & acceptance criteria — when this counts as done', value: deliverable });
+    } else {
+      if (deliverable) cards.push({ label: 'Required deliverable', value: deliverable });
+      if (acceptance) cards.push({ label: 'Acceptance criteria — when this counts as done', value: acceptance });
+    }
+    if (validation) cards.push({ label: 'Validation procedure — how it will be reviewed', value: validation });
+    return cards;
+  }, [checkpoint]);
+
   const members = useMemo<MemberStat[]>(() => {
     const map = new Map<string, MemberStat>();
     for (const task of tasks) {
@@ -233,7 +251,7 @@ export function CheckpointDetailPage() {
       ) : (
         <>
           {/* Header */}
-          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 18px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
               <div>
                 <span style={{ fontSize: '0.72rem', color: 'var(--color-cyan-sentinel)', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
@@ -286,19 +304,19 @@ export function CheckpointDetailPage() {
           </Panel>
 
           {/* What is required */}
-          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 18px' }}>
             <h3 style={{ margin: 0, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <ClipboardList size={15} style={{ color: 'var(--color-cyan-sentinel)' }} /> What is required
             </h3>
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-              <RequirementCard label="Required deliverable" value={checkpoint.requiredDeliverable} />
-              <RequirementCard label="Acceptance criteria — when this counts as done" value={checkpoint.acceptanceCriteria} />
-              <RequirementCard label="Validation procedure — how it will be reviewed" value={checkpoint.validationProcedure} />
+              {requirementCards.map((card) => (
+                <RequirementCard key={card.label} label={card.label} value={card.value} />
+              ))}
             </div>
           </Panel>
 
           {/* Final deliverable */}
-          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 18px' }}>
             <h3 style={{ margin: 0, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <ShieldCheck size={15} style={{ color: 'var(--color-cyan-sentinel)' }} /> Final deliverable and how task outputs roll up
             </h3>
@@ -313,7 +331,7 @@ export function CheckpointDetailPage() {
           </Panel>
 
           {/* Member progress */}
-          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 18px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
               <h3 style={{ margin: 0, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Users size={15} style={{ color: 'var(--color-cyan-sentinel)' }} /> Who is doing what
@@ -395,7 +413,7 @@ export function CheckpointDetailPage() {
           </Panel>
 
           {/* Task table */}
-          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 18px' }}>
             <h3 style={{ margin: 0, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Layers size={15} style={{ color: 'var(--color-cyan-sentinel)' }} /> Tasks
               {assigneeFilter ? (
@@ -524,7 +542,7 @@ export function CheckpointDetailPage() {
           </Panel>
 
           {/* Submissions and reviews */}
-          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 18px' }}>
             <h3 style={{ margin: 0, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <CheckCircle2 size={15} style={{ color: 'var(--color-cyan-sentinel)' }} /> Submissions and review status
             </h3>
