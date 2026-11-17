@@ -13,6 +13,7 @@ import {
   FileText,
   FlaskConical,
   GitBranch,
+  GraduationCap,
   LayoutDashboard,
   LogOut,
   Megaphone,
@@ -34,10 +35,12 @@ import { useAuth } from '../app/auth-context';
 import { useRealtimeEvents } from '../lib/use-realtime-events';
 import { api } from '../lib/api';
 import { useIdleWarning } from '../lib/use-idle-warning';
+import { ONBOARDING_STORAGE_KEY, onboardingStatus, writeOnboardingMarker } from '../lib/onboarding';
 import { Button } from './ui';
 import { CommandPalette } from './command-palette';
 import { CerberusLogo, CerberusSentinelStatus } from './cerberus-logo';
 import { IdleWarningDialog } from './idle-warning-dialog';
+import { LearningGuide } from './onboarding/learning-guide';
 
 export function AppShell() {
   const { user, session, logout, refresh } = useAuth();
@@ -46,6 +49,8 @@ export function AppShell() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [staying, setStaying] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const [autoOpenedFor, setAutoOpenedFor] = useState<string | null>(null);
   const [mode, setMode] = useState<'member' | 'admin' | 'supervisor'>(() =>
     user?.roles.includes('super_admin') ? 'admin' : user?.roles.includes('project_supervisor') ? 'supervisor' : 'member'
   );
@@ -87,6 +92,30 @@ export function AppShell() {
     staleTime: 15_000,
   });
   const unreadCount = unreadQuery.data?.count ?? 0;
+
+  // Auto-open the learning guide once per user until it is finished or skipped.
+  // Adjusted during render (React's derived-state pattern) so the first paint of
+  // the shell already carries the guide when onboarding is still pending.
+  if (user && autoOpenedFor === null) {
+    setAutoOpenedFor(user.id);
+    let raw: string | null = null;
+    try {
+      raw = localStorage.getItem(ONBOARDING_STORAGE_KEY);
+    } catch {
+      raw = null;
+    }
+    if (onboardingStatus(raw, user.id) === 'pending') {
+      setGuideOpen(true);
+    }
+  }
+
+  const closeGuide = useCallback(
+    (finished: boolean) => {
+      setGuideOpen(false);
+      if (user) writeOnboardingMarker(user.id, finished ? 'completed' : 'dismissed');
+    },
+    [user],
+  );
 
   if (!user) return null;
 
@@ -196,6 +225,10 @@ export function AppShell() {
             <span className="nav-label">Search</span>
             <kbd className="nav-label">Ctrl K</kbd>
           </button>
+          <button type="button" className="utility-link" onClick={() => setGuideOpen(true)} aria-label="Reopen the learning guide">
+            <GraduationCap size={16} className="nav-icon" />
+            <span className="nav-label">Learning guide</span>
+          </button>
           <NavLink className="utility-link" to="/notifications" aria-label={`Alerts${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}>
             <Bell size={16} className="nav-icon" />
             <span className="nav-label">Alerts</span>
@@ -235,6 +268,9 @@ export function AppShell() {
       </main>
 
       {paletteOpen && <CommandPalette onClose={closePalette} />}
+      {guideOpen && (
+        <LearningGuide onClose={closeGuide} mode={mode} roles={user.roles} />
+      )}
       {idle.warning && (
         <IdleWarningDialog
           secondsLeft={idle.secondsLeft}
