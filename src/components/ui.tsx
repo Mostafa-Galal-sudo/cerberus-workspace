@@ -4,7 +4,7 @@ import { cn } from '../lib/utils';
 
 const buttonVariants = cva('button inline-flex items-center justify-center gap-2 rounded-md font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-signal disabled:cursor-not-allowed disabled:opacity-50', {
   variants: {
-    variant: { primary: 'bg-signal text-obsidian hover:bg-[#79bdff]', secondary: 'border border-steel bg-graphite text-slate-100 hover:bg-steel/60', ghost: 'text-slate-300 hover:bg-steel/40 hover:text-white', danger: 'bg-danger text-obsidian hover:bg-[#ff8796]' },
+    variant: { primary: 'bg-signal text-obsidian hover:bg-[#74a9ee]', secondary: 'border border-steel bg-graphite text-slate-100 hover:bg-steel/60', ghost: 'text-slate-300 hover:bg-steel/40 hover:text-white', danger: 'bg-danger text-obsidian hover:bg-[#ea8b95]' },
     size: { sm: 'h-8 px-3 text-xs', md: 'h-10 px-4 text-sm', lg: 'h-12 px-5 text-sm' },
   }, defaultVariants: { variant: 'primary', size: 'md' },
 });

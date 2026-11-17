@@ -57,12 +57,12 @@ export function IdleWarningDialog({ secondsLeft, pending = false, onStay, onSign
       aria-modal="true"
       aria-labelledby="idle-warning-title"
       aria-describedby="idle-warning-body"
-      style={{ position: 'fixed', inset: 0, background: 'rgba(5, 6, 8, 0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 120, padding: '20px' }}
+      style={{ position: 'fixed', inset: 0, background: 'rgba(7, 9, 13, 0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 120, padding: '20px' }}
     >
       <div
         className="modal-card idle-warning-card"
         ref={cardRef}
-        style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-chiseled)', borderRadius: '8px', maxWidth: '440px', width: '100%', padding: '24px', boxShadow: '0 12px 36px rgba(0,0,0,0.8)' }}
+        style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-chiseled)', borderRadius: '8px', maxWidth: '440px', width: '100%', padding: '24px', boxShadow: '0 12px 36px rgba(6,8,11,0.8)' }}
       >
         <h2 id="idle-warning-title" style={{ margin: '0 0 8px', fontSize: '1.05rem', color: 'var(--color-platinum-pure)' }}>
           Session about to lock

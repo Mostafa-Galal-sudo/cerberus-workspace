@@ -11,6 +11,7 @@ import {
 import { Fragment, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Button, EmptyState, PageSkeleton, Panel, StatusBadge } from '../../components/ui';
+import { HelpHint } from '../../components/help-hint';
 import { api, formatDate } from '../../lib/api';
 
 interface CheckpointTask {
@@ -319,14 +320,13 @@ export function CheckpointDetailPage() {
           <Panel style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px 18px' }}>
             <h3 style={{ margin: 0, fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <ShieldCheck size={15} style={{ color: 'var(--color-cyan-sentinel)' }} /> Final deliverable and how task outputs roll up
+              <HelpHint text="Each linked task carries its own expected output; together they build the deliverable above. The checkpoint can only be submitted once every linked task is approved." />
             </h3>
             <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--color-silver-light)', lineHeight: 1.55, whiteSpace: 'pre-wrap' }}>
               {checkpoint.requiredDeliverable?.trim() || 'Not specified.'}
             </p>
             <p style={{ margin: 0, fontSize: '0.76rem', color: 'var(--color-pewter)', lineHeight: 1.5 }}>
-              Each task below carries its own expected output and deliverables (shown when you expand it). Those outputs are
-              what build up the deliverable above, and the checkpoint cannot be submitted for review until every linked task
-              is approved — the submission gate enforces that.
+              Task outputs build up the deliverable above; submission opens once every linked task is approved.
             </p>
           </Panel>
 

@@ -908,14 +908,14 @@ export function TasksPage() {
       {submittingTask && (
         <div
           className="modal-backdrop"
-          style={{ position: 'fixed', inset: 0, background: 'rgba(5, 6, 8, 0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(7, 9, 13, 0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}
           role="dialog"
           aria-labelledby="submission-modal-title"
           aria-modal="true"
         >
           <div
             className="modal-card"
-            style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-chiseled)', borderRadius: '8px', maxWidth: '520px', width: '100%', padding: '24px', boxShadow: '0 12px 36px rgba(0,0,0,0.8)' }}
+            style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-chiseled)', borderRadius: '8px', maxWidth: '520px', width: '100%', padding: '24px', boxShadow: '0 12px 36px rgba(6,8,11,0.8)' }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--color-border-armor)', paddingBottom: '12px' }}>
               <div>
@@ -1303,7 +1303,7 @@ export function TasksPage() {
         >
           <div
             className="modal-card"
-            style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-chiseled)', borderRadius: '8px', maxWidth: '560px', width: '100%', padding: '24px', boxShadow: '0 16px 48px rgba(0,0,0,0.85)', maxHeight: '90vh', overflowY: 'auto' }}
+            style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-chiseled)', borderRadius: '8px', maxWidth: '560px', width: '100%', padding: '24px', boxShadow: '0 16px 48px rgba(6,8,11,0.85)', maxHeight: '90vh', overflowY: 'auto' }}
           >
             {/* Modal Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px', borderBottom: '1px solid var(--color-border-armor)', paddingBottom: '14px' }}>
@@ -1442,7 +1442,7 @@ export function TasksPage() {
 
       {/* Task Creation Modal */}
       {isCreateOpen && (
-        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}>
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(6,8,11,0.78)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}>
           <div className="modal-card" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', borderRadius: '8px', maxWidth: '720px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--color-border)', paddingBottom: '12px' }}>
               <h2 style={{ margin: 0, fontSize: '1.25rem' }}>Define Engineering Task</h2>

@@ -23,6 +23,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../../app/auth-context';
 import { AttachmentPanel } from '../../components/attachment-panel';
 import { Button, EmptyState, PageSkeleton, Panel, StatusBadge } from '../../components/ui';
+import { HelpHint } from '../../components/help-hint';
 import { api, ApiError, formatDate } from '../../lib/api';
 
 interface Detail {
@@ -432,7 +433,10 @@ export function TaskDetailPage() {
           <Panel>
             <div className="panel-heading">
               <div>
-                <h2>Sentinel Implementation Brief</h2>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  Sentinel Implementation Brief
+                  <HelpHint text="Administrator-defined specifications for this task: steps, deliverables, prerequisites, tools, outputs, acceptance criteria, validation procedure and the evidence reviewers will expect." />
+                </h2>
                 <p>The administrator-defined specifications and evidence requirements.</p>
               </div>
             </div>
@@ -940,7 +944,7 @@ export function TaskDetailPage() {
 
       {/* Comprehensive Task Definition Editor Modal */}
       {isEditOpen && (
-        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(5, 6, 8, 0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}>
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, background: 'rgba(7, 9, 13, 0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100, padding: '20px' }}>
           <div
             className="modal-card"
             role="dialog"
@@ -968,7 +972,7 @@ export function TaskDetailPage() {
                 first.focus();
               }
             }}
-            style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-armor)', borderRadius: '8px', maxWidth: '780px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px', boxShadow: '0 12px 36px rgba(0,0,0,0.8)' }}
+            style={{ background: 'var(--color-surface-elevated)', border: '1px solid var(--color-border-armor)', borderRadius: '8px', maxWidth: '780px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '24px', boxShadow: '0 12px 36px rgba(6,8,11,0.8)' }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--color-border-subtle)', paddingBottom: '12px' }}>
               <div>

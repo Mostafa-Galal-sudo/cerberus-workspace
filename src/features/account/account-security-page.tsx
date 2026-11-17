@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Button, Field, PageSkeleton, Panel } from '../../components/ui';
+import { HelpHint } from '../../components/help-hint';
 import { api, apiWithMeta, ApiError, formatDate, type PageMeta } from '../../lib/api';
 
 interface SecurityOverview {
@@ -235,7 +236,13 @@ export function AccountSecurityPage() {
 
         <Panel>
           <div className="panel-heading">
-            <h2>Authenticator protection</h2>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              Authenticator protection
+              <HelpHint
+                label="About authenticator secret storage"
+                text="When a deployment key is configured, authenticator secrets are sealed with AES-256-GCM before storage. Recovery codes are hashed and single-use. Administrators can reset MFA for a member from the members page."
+              />
+            </h2>
             <KeyRound size={16} />
           </div>
           <small style={{ display: 'block', marginBottom: '10px', color: 'var(--color-pewter)' }}>
